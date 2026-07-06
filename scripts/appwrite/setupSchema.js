@@ -6,6 +6,7 @@ import {
   Databases,
   DatabasesIndexType,
   Permission,
+  Query,
   Role,
   Storage,
 } from 'node-appwrite';
@@ -15,7 +16,7 @@ import {
   DATABASE_ID as DEFAULT_DATABASE_ID,
 } from '../../src/config/appwriteSchema.js';
 
-config({ path: ['.env.local', '.env'] });
+config({ path: ['.env.local', '.env'], quiet: true });
 
 const DATABASE_NAME = 'MSME Pilot';
 const REQUIRED_ENV = [
@@ -36,6 +37,7 @@ const summary = {
   indexesSkipped: 0,
   bucketsCreated: 0,
   bucketsSkipped: 0,
+  bucketsFailed: 0,
 };
 
 function fail(message) {
@@ -79,6 +81,13 @@ function isNotFound(error) {
 
 function isConflict(error) {
   return error instanceof AppwriteException && error.code === 409;
+}
+
+function isBucketPlanLimit(error) {
+  return (
+    error instanceof AppwriteException &&
+    String(error.message || '').toLowerCase().includes('maximum number of buckets')
+  );
 }
 
 function sleep(ms) {
@@ -348,7 +357,7 @@ const collectionSchemas = [
       attr.string('status', 64, true),
       attr.boolean('inventoryUpdated'),
       attr.string('extractedText', 12000),
-      attr.string('aiExtractedJson', 12000),
+      attr.string('aiExtractedJson', 2000),
       attr.string('fileId', 128),
       attr.string('fileName', 255),
       attr.string('fileType', 80),
@@ -454,9 +463,9 @@ const collectionSchemas = [
       attr.integer('pendingPaymentsScore'),
       attr.integer('customerGrowth'),
       attr.integer('profitMargin'),
-      attr.string('recommendationsJson', 10000),
-      attr.string('risksJson', 10000),
-      attr.string('opportunitiesJson', 10000),
+      attr.string('recommendationsJson', 3000),
+      attr.string('risksJson', 3000),
+      attr.string('opportunitiesJson', 3000),
     ],
     indexes: [
       keyIndex('userId'),
@@ -586,6 +595,7 @@ async function listAttributesMap(databases, databaseId, collectionId) {
   const response = await databases.listAttributes({
     databaseId,
     collectionId,
+    queries: [Query.limit(200)],
     total: true,
   });
   return new Map(response.attributes.map((attribute) => [attribute.key, attribute]));
@@ -595,6 +605,7 @@ async function listIndexesMap(databases, databaseId, collectionId) {
   const response = await databases.listIndexes({
     databaseId,
     collectionId,
+    queries: [Query.limit(200)],
     total: true,
   });
   return new Map(response.indexes.map((index) => [index.key, index]));
@@ -725,20 +736,28 @@ async function ensureBucket(storage, bucket) {
     summary.bucketsSkipped += 1;
   } catch (error) {
     if (!isNotFound(error)) throw error;
-    await storage.createBucket({
-      bucketId: bucket.id,
-      name: bucket.name,
-      permissions: bucketPermissions(),
-      fileSecurity: true,
-      enabled: true,
-      maximumFileSize: bucket.maxSize,
-      allowedFileExtensions: bucket.extensions,
-      compression: Compression.None,
-      encryption: true,
-      antivirus: true,
-    });
-    console.log(`[bucket] ${bucket.id} created`);
-    summary.bucketsCreated += 1;
+    try {
+      await storage.createBucket({
+        bucketId: bucket.id,
+        name: bucket.name,
+        permissions: bucketPermissions(),
+        fileSecurity: true,
+        enabled: true,
+        maximumFileSize: bucket.maxSize,
+        allowedFileExtensions: bucket.extensions,
+        compression: Compression.None,
+        encryption: true,
+        antivirus: true,
+      });
+      console.log(`[bucket] ${bucket.id} created`);
+      summary.bucketsCreated += 1;
+    } catch (createError) {
+      if (!isBucketPlanLimit(createError)) throw createError;
+      console.warn(
+        `[bucket] ${bucket.id} not created: Appwrite plan bucket limit reached. Upgrade the plan or create this bucket later.`,
+      );
+      summary.bucketsFailed += 1;
+    }
   }
 }
 

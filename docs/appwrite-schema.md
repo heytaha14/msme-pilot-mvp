@@ -119,7 +119,10 @@ Purpose: Stores uploaded/scanned supplier purchase invoices.
 
 Important attributes: `invoiceNumber`, `supplierId`, `supplierName`, `supplierPhone`, `invoiceDate`, `subtotal`, `gstAmount`, `totalAmount`, `status`, `inventoryUpdated`, `extractedText`, `aiExtractedJson`, `fileId`, `fileName`, `fileType`.
 
-Large JSON/text values are stored as strings for now.
+Large JSON/text values are stored as strings for now. Appwrite enforces total
+attribute size limits per collection, so `extractedText` remains the large OCR
+field while `aiExtractedJson` is kept compact. Full extracted JSON can later move
+to Storage or a dedicated detail collection if needed.
 
 Indexes: `userId_index`, `invoiceNumber_index`, `supplierId_index`, `supplierName_index`, `status_index`, `inventoryUpdated_index`, `invoiceDate_index`, `createdAt_index`.
 
@@ -159,7 +162,9 @@ Purpose: Stores calculated business health score history.
 
 Important attributes: `score`, `status`, `inventoryHealth`, `salesPerformance`, `pendingPaymentsScore`, `customerGrowth`, `profitMargin`, `recommendationsJson`, `risksJson`, `opportunitiesJson`.
 
-Large JSON values are serialized strings for now.
+Large JSON values are serialized strings for now. Recommendation, risk, and
+opportunity JSON fields are intentionally compact to stay within Appwrite
+collection attribute size limits.
 
 Indexes: `userId_index`, `score_index`, `status_index`, `createdAt_index`.
 
