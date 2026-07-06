@@ -1,0 +1,381 @@
+import { useState } from 'react';
+import {
+  Building2,
+  CheckCircle2,
+  ChevronDown,
+  Eye,
+  EyeOff,
+  LockKeyhole,
+  Mail,
+  Phone,
+  ShieldCheck,
+  Sparkles,
+  Store,
+  User,
+} from 'lucide-react';
+import { Link, useNavigate } from 'react-router-dom';
+import clsx from 'clsx';
+import Badge from '../../components/common/Badge.jsx';
+import Button from '../../components/common/Button.jsx';
+import Card from '../../components/common/Card.jsx';
+import Input from '../../components/common/Input.jsx';
+import AuthLayout from '../../components/layout/AuthLayout.jsx';
+import {
+  businessMetrics,
+  businessTypeOptions,
+  registrationChecklist,
+} from '../../data/mockData.js';
+import { isValidEmail, isValidIndianPhone } from '../../utils/validators.js';
+
+const initialValues = {
+  ownerName: '',
+  businessName: '',
+  businessType: '',
+  email: '',
+  phone: '',
+  password: '',
+  confirmPassword: '',
+};
+
+function SelectField({
+  error,
+  icon: Icon,
+  label,
+  name,
+  onChange,
+  options,
+  value,
+}) {
+  const errorId = error ? `${name}-error` : undefined;
+
+  return (
+    <label className="block" htmlFor={name}>
+      <span className="mb-2 block text-sm font-semibold text-slate-700">
+        {label}
+      </span>
+      <span className="relative block">
+        {Icon ? (
+          <Icon className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+        ) : null}
+        <select
+          aria-describedby={errorId}
+          aria-invalid={error ? 'true' : undefined}
+          className={clsx(
+            'h-12 w-full appearance-none rounded-2xl border border-slate-200 bg-white px-4 pr-11 text-sm text-slate-900 outline-none transition-all focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100',
+            Icon && 'pl-11',
+            !value && 'text-slate-400',
+            error && 'border-rose-300 focus:border-rose-300 focus:ring-rose-100',
+          )}
+          id={name}
+          name={name}
+          onChange={onChange}
+          value={value}
+        >
+          <option value="">Select business type</option>
+          {options.map((option) => (
+            <option key={option} value={option}>
+              {option}
+            </option>
+          ))}
+        </select>
+        <ChevronDown className="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
+      </span>
+      {error ? (
+        <span className="mt-2 block text-sm text-rose-600" id={errorId}>
+          {error}
+        </span>
+      ) : null}
+    </label>
+  );
+}
+
+function RegisterPreviewPanel() {
+  const previewMetrics = [
+    ['Business Health', businessMetrics.businessHealthScore],
+    ['Inventory', `${businessMetrics.totalProducts} products`],
+    ['Low Stock', businessMetrics.lowStock],
+    ['Pending Payments', businessMetrics.pendingPayments],
+  ];
+
+  return (
+    <Card
+      className="relative overflow-hidden bg-gradient-to-br from-slate-950 to-indigo-950 text-white"
+      padding="lg"
+    >
+      <div className="absolute right-8 top-8 h-36 w-36 rounded-full bg-cyan-400/20 blur-3xl" />
+      <div className="absolute bottom-8 left-10 h-40 w-40 rounded-full bg-indigo-400/20 blur-3xl" />
+
+      <div className="relative">
+        <Link className="hidden items-center gap-3 lg:flex" to="/">
+          <span className="grid h-11 w-11 place-items-center rounded-2xl bg-white text-sm font-black text-slate-950">
+            MP
+          </span>
+          <span className="font-bold">MSME Pilot</span>
+        </Link>
+
+        <div className="mt-0 lg:mt-12">
+          <Badge className="bg-white/10 text-cyan-100 ring-white/15" variant="neutral">
+            Onboarding preview
+          </Badge>
+          <h2 className="mt-6 text-3xl font-black tracking-tight">
+            Ahmed Kirana Store
+          </h2>
+          <p className="mt-2 text-sm font-semibold text-cyan-100">Kirana Store</p>
+        </div>
+
+        <div className="mt-8 grid grid-cols-2 gap-3">
+          {previewMetrics.map(([label, value]) => (
+            <div className="rounded-3xl border border-white/10 bg-white/10 p-4" key={label}>
+              <p className="text-xs font-semibold text-slate-300">{label}</p>
+              <p className="mt-2 text-xl font-black text-white">{value}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-6 rounded-3xl border border-white/10 bg-white/10 p-5">
+          <div className="flex items-start gap-3">
+            <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-cyan-200" />
+            <div>
+              <p className="text-sm font-black text-white">AI Tip</p>
+              <p className="mt-1 text-sm leading-6 text-slate-300">
+                Restock Rice before Friday and follow up with Ahmed Traders.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-6 space-y-3">
+          {registrationChecklist.map((item) => (
+            <div className="flex items-center gap-3" key={item}>
+              <CheckCircle2 className="h-5 w-5 text-emerald-300" />
+              <span className="text-sm font-semibold text-slate-200">{item}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+export default function RegisterPage() {
+  const navigate = useNavigate();
+  const [values, setValues] = useState(initialValues);
+  const [errors, setErrors] = useState({});
+  const [isLoading, setIsLoading] = useState(false);
+  const [passwordVisibility, setPasswordVisibility] = useState({
+    password: false,
+    confirmPassword: false,
+  });
+
+  function updateField(event) {
+    const { name, value } = event.target;
+    setValues((current) => ({ ...current, [name]: value }));
+    setErrors((current) => ({ ...current, [name]: undefined }));
+  }
+
+  function validate() {
+    const nextErrors = {};
+
+    if (!values.ownerName.trim()) {
+      nextErrors.ownerName = 'Owner name is required.';
+    }
+
+    if (!values.businessName.trim()) {
+      nextErrors.businessName = 'Business name is required.';
+    }
+
+    if (!values.businessType) {
+      nextErrors.businessType = 'Business type is required.';
+    }
+
+    if (!values.email.trim()) {
+      nextErrors.email = 'Email is required.';
+    } else if (!isValidEmail(values.email)) {
+      nextErrors.email = 'Enter a valid email address.';
+    }
+
+    if (!values.phone.trim()) {
+      nextErrors.phone = 'Phone number is required.';
+    } else if (!isValidIndianPhone(values.phone)) {
+      nextErrors.phone = 'Enter a valid 10-digit Indian mobile number.';
+    }
+
+    if (!values.password) {
+      nextErrors.password = 'Password is required.';
+    }
+
+    if (!values.confirmPassword) {
+      nextErrors.confirmPassword = 'Confirm password is required.';
+    } else if (values.password && values.password !== values.confirmPassword) {
+      nextErrors.confirmPassword = 'Passwords must match.';
+    }
+
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  }
+
+  function handleSubmit(event) {
+    event.preventDefault();
+
+    if (!validate()) {
+      return;
+    }
+
+    setIsLoading(true);
+    window.setTimeout(() => {
+      navigate('/dashboard');
+    }, 850);
+  }
+
+  function passwordToggle(field) {
+    return (
+      <button
+        aria-label={passwordVisibility[field] ? `Hide ${field}` : `Show ${field}`}
+        className="grid h-8 w-8 place-items-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700"
+        onClick={() =>
+          setPasswordVisibility((current) => ({
+            ...current,
+            [field]: !current[field],
+          }))
+        }
+        type="button"
+      >
+        {passwordVisibility[field] ? (
+          <EyeOff className="h-4 w-4" />
+        ) : (
+          <Eye className="h-4 w-4" />
+        )}
+      </button>
+    );
+  }
+
+  return (
+    <AuthLayout aside={<RegisterPreviewPanel />} formFirst formWide>
+      <Card className="w-full" padding="lg" variant="glass">
+        <div className="flex items-start gap-4">
+          <div className="grid h-12 w-12 place-items-center rounded-2xl bg-indigo-50 text-indigo-600">
+            <Store className="h-6 w-6" />
+          </div>
+          <div>
+            <h1 className="text-3xl font-black tracking-tight text-slate-950">
+              Create your MSME Pilot account
+            </h1>
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              Set up your digital business cockpit in minutes.
+            </p>
+          </div>
+        </div>
+
+        <form className="mt-8 space-y-5" noValidate onSubmit={handleSubmit}>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Input
+              autoComplete="name"
+              error={errors.ownerName}
+              icon={User}
+              label="Owner name"
+              name="ownerName"
+              onChange={updateField}
+              placeholder="Taha"
+              value={values.ownerName}
+            />
+            <Input
+              autoComplete="organization"
+              error={errors.businessName}
+              icon={Building2}
+              label="Business name"
+              name="businessName"
+              onChange={updateField}
+              placeholder="Ahmed Kirana Store"
+              value={values.businessName}
+            />
+          </div>
+
+          <SelectField
+            error={errors.businessType}
+            icon={Store}
+            label="Business type"
+            name="businessType"
+            onChange={updateField}
+            options={businessTypeOptions}
+            value={values.businessType}
+          />
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Input
+              autoComplete="email"
+              error={errors.email}
+              icon={Mail}
+              label="Email"
+              name="email"
+              onChange={updateField}
+              placeholder="taha@ahmedkirana.in"
+              type="email"
+              value={values.email}
+            />
+            <Input
+              autoComplete="tel"
+              error={errors.phone}
+              icon={Phone}
+              label="Phone number"
+              name="phone"
+              onChange={updateField}
+              placeholder="+91 98765 43210"
+              type="tel"
+              value={values.phone}
+            />
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Input
+              autoComplete="new-password"
+              error={errors.password}
+              icon={LockKeyhole}
+              label="Password"
+              name="password"
+              onChange={updateField}
+              placeholder="Create password"
+              rightElement={passwordToggle('password')}
+              type={passwordVisibility.password ? 'text' : 'password'}
+              value={values.password}
+            />
+            <Input
+              autoComplete="new-password"
+              error={errors.confirmPassword}
+              icon={LockKeyhole}
+              label="Confirm password"
+              name="confirmPassword"
+              onChange={updateField}
+              placeholder="Repeat password"
+              rightElement={passwordToggle('confirmPassword')}
+              type={passwordVisibility.confirmPassword ? 'text' : 'password'}
+              value={values.confirmPassword}
+            />
+          </div>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Button
+              className="w-full"
+              loading={isLoading}
+              rounded="2xl"
+              size="lg"
+              type="submit"
+            >
+              Create Account
+            </Button>
+            <Button className="w-full" rounded="2xl" size="lg" variant="secondary">
+              <ShieldCheck className="h-4 w-4" />
+              Continue with Google
+            </Button>
+          </div>
+        </form>
+
+        <p className="mt-6 text-center text-sm text-slate-500">
+          Already have an account?{' '}
+          <Link className="font-bold text-indigo-600 hover:text-indigo-700" to="/login">
+            Login
+          </Link>
+        </p>
+      </Card>
+    </AuthLayout>
+  );
+}
