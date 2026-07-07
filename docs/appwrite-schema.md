@@ -196,6 +196,12 @@ Indexes: `userId_index`, `reportType_index`, `period_index`, `status_index`, `ge
 
 ## Storage Buckets
 
+If Appwrite reports that the maximum number of buckets for the selected plan has
+been reached, the setup script will keep the database schema intact, create/skip
+whatever buckets are allowed, and mark the rest as failed in the summary. Upgrade
+the Appwrite plan or create the remaining buckets later before wiring real file
+uploads.
+
 ### invoice_images
 
 Purpose: Stores uploaded invoice images and invoice PDF files.

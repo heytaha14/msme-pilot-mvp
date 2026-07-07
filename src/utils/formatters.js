@@ -20,14 +20,10 @@ export function formatPercentage(value) {
 
 export function getStockStatus(product) {
   const currentStock = Number(product.currentStock ?? product.stock ?? 0);
-  const minimumStock = Number(product.minimumStock ?? product.minimum ?? 0);
+  const minimumStock = Number(product.minimumStock ?? product.minStock ?? product.minimum ?? 0);
 
   if (currentStock <= 0) {
     return 'Out of Stock';
-  }
-
-  if (currentStock < minimumStock * 0.5) {
-    return 'Critical';
   }
 
   if (currentStock <= minimumStock) {
@@ -42,6 +38,24 @@ export function calculateProductValue(product) {
   const purchasePrice = Number(product.purchasePrice ?? 0);
 
   return currentStock * purchasePrice;
+}
+
+export function calculateInventoryValue(product) {
+  return calculateProductValue(product);
+}
+
+export function calculateProfitPerUnit(product) {
+  return Number(product.sellingPrice ?? 0) - Number(product.purchasePrice ?? 0);
+}
+
+export function calculateMarginPercentage(product) {
+  const sellingPrice = Number(product.sellingPrice ?? 0);
+
+  if (!sellingPrice) {
+    return 0;
+  }
+
+  return (calculateProfitPerUnit(product) / sellingPrice) * 100;
 }
 
 export function getStockBadgeVariant(status) {

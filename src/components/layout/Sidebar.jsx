@@ -1,11 +1,25 @@
 import clsx from 'clsx';
-import { Lightbulb, Sparkles } from 'lucide-react';
-import { NavLink } from 'react-router-dom';
+import { LogOut, Sparkles } from 'lucide-react';
+import { NavLink, useNavigate } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext.jsx';
 import { businessProfile, navItems } from '../../data/mockData.js';
 import Badge from '../common/Badge.jsx';
 import Card from '../common/Card.jsx';
 
 export default function Sidebar() {
+  const navigate = useNavigate();
+  const { logout, profile, user } = useAuth();
+
+  const businessName = profile?.businessName || businessProfile.businessName;
+  const ownerName = profile?.ownerName || user?.name || businessProfile.userName;
+  const plan = profile?.plan || businessProfile.plan;
+  const initial = (ownerName || businessName || 'M').charAt(0).toUpperCase();
+
+  async function handleLogout() {
+    await logout();
+    navigate('/login', { replace: true });
+  }
+
   return (
     <aside className="fixed left-4 top-4 z-30 hidden h-[calc(100vh-2rem)] w-72 flex-col overflow-hidden rounded-3xl border border-white/70 bg-white/80 p-4 shadow-glass backdrop-blur-2xl lg:flex">
       <div className="flex items-center gap-3 px-2 py-3">
@@ -73,17 +87,24 @@ export default function Sidebar() {
         <Card padding="sm" variant="glass">
           <div className="flex items-center gap-3">
             <div className="grid h-10 w-10 place-items-center rounded-2xl bg-slate-950 text-sm font-bold text-white">
-              {businessProfile.userName.charAt(0)}
+              {initial}
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-bold text-slate-950">
-                {businessProfile.businessName}
+                {businessName}
               </p>
               <p className="truncate text-xs text-slate-500">
-                {businessProfile.userName} - {businessProfile.plan}
+                {ownerName} - {plan}
               </p>
             </div>
-            <Lightbulb className="h-4 w-4 text-amber-500" />
+            <button
+              aria-label="Logout"
+              className="grid h-9 w-9 place-items-center rounded-full text-slate-400 transition hover:bg-rose-50 hover:text-rose-600"
+              onClick={handleLogout}
+              type="button"
+            >
+              <LogOut className="h-4 w-4" />
+            </button>
           </div>
         </Card>
       </div>

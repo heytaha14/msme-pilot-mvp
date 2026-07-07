@@ -29,7 +29,7 @@ import {
   WandSparkles,
   X,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import Badge from '../../components/common/Badge.jsx';
 import Button from '../../components/common/Button.jsx';
@@ -37,6 +37,7 @@ import Card from '../../components/common/Card.jsx';
 import Input from '../../components/common/Input.jsx';
 import SectionHeader from '../../components/common/SectionHeader.jsx';
 import StatCard from '../../components/common/StatCard.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
 import {
   accountPlan as mockAccountPlan,
   addressProfile,
@@ -694,6 +695,7 @@ function ProfileEditModal({ data, onClose, onSave, section }) {
 }
 
 export default function ProfilePage() {
+  const { profile: authProfile, user } = useAuth();
   const [owner, setOwner] = useState(userProfile);
   const [business, setBusiness] = useState(businessDetailsProfile);
   const [address, setAddress] = useState(addressProfile);
@@ -702,6 +704,50 @@ export default function ProfilePage() {
   const [logoPreview, setLogoPreview] = useState('');
   const [editSection, setEditSection] = useState(null);
   const [successMessage, setSuccessMessage] = useState('');
+
+  useEffect(() => {
+    if (!authProfile && !user) return;
+
+    setOwner((current) => ({
+      ...current,
+      ownerName: authProfile?.ownerName || user?.name || current.ownerName,
+      email: authProfile?.email || user?.email || current.email,
+      phone: authProfile?.phone || current.phone,
+      role: authProfile?.role || current.role,
+      languagePreference: authProfile?.language || current.languagePreference,
+      joinedAt: authProfile?.createdAt || user?.registration || current.joinedAt,
+    }));
+
+    if (authProfile) {
+      setBusiness((current) => ({
+        ...current,
+        businessName: authProfile.businessName || current.businessName,
+        businessType: authProfile.businessType || current.businessType,
+        industry: authProfile.industry || current.industry,
+        businessSize: authProfile.businessSize || current.businessSize,
+        employees: String(authProfile.employees || current.employees),
+        establishedYear: String(authProfile.establishedYear || current.establishedYear),
+      }));
+
+      setAddress((current) => ({
+        ...current,
+        address: authProfile.address || current.address,
+        city: authProfile.city || current.city,
+        state: authProfile.state || current.state,
+        pinCode: authProfile.pinCode || current.pinCode,
+        country: authProfile.country || current.country,
+        businessPhone: authProfile.businessPhone || authProfile.phone || current.businessPhone,
+        supportEmail: authProfile.supportEmail || authProfile.email || current.supportEmail,
+      }));
+
+      setGst((current) => ({
+        ...current,
+        gstRegistered: authProfile.gstRegistered ? 'Yes' : 'No',
+        gstin: authProfile.gstin || current.gstin,
+        pan: authProfile.pan || current.pan,
+      }));
+    }
+  }, [authProfile, user]);
 
   const profile = useMemo(
     () => ({
@@ -828,6 +874,18 @@ export default function ProfilePage() {
           </motion.div>
         ) : null}
       </AnimatePresence>
+
+      {user && !authProfile ? (
+        <Card className="border-amber-100 bg-amber-50/90" padding="sm">
+          <div className="flex items-start gap-3 text-sm font-semibold text-amber-800">
+            <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
+            <p>
+              Business profile not found. Complete registration or run the
+              Appwrite profile setup before using real profile data.
+            </p>
+          </div>
+        </Card>
+      ) : null}
 
       <ProfileHero
         logoPreview={logoPreview}

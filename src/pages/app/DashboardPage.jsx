@@ -10,6 +10,7 @@ import Button from '../../components/common/Button.jsx';
 import Card from '../../components/common/Card.jsx';
 import SectionHeader from '../../components/common/SectionHeader.jsx';
 import StatCard from '../../components/common/StatCard.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
 import {
   aiFocusItems,
   businessMetrics,
@@ -77,16 +78,21 @@ function ProgressBar({ item }) {
 }
 
 export default function DashboardPage() {
+  const { profile, user } = useAuth();
+  const ownerName = profile?.ownerName || user?.name || businessProfile.userName;
+  const businessName = profile?.businessName || businessProfile.businessName;
+  const firstName = ownerName.split(' ')[0] || ownerName;
+
   return (
     <div className="space-y-6">
       <Card className="overflow-hidden" padding="lg" variant="glass">
         <div className="grid gap-6 xl:grid-cols-[1fr_0.42fr] xl:items-stretch">
           <div>
             <p className="text-sm font-semibold text-indigo-600">
-              Good evening, {businessProfile.userName}
+              Good evening, {firstName}
             </p>
             <h2 className="mt-2 text-3xl font-black tracking-tight text-slate-950 sm:text-4xl">
-              {businessProfile.businessName}
+              {businessName}
             </h2>
             <p className="mt-3 text-lg font-bold text-slate-800">
               Your business is healthy. Cash flow needs attention.

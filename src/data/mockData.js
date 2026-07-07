@@ -349,6 +349,8 @@ export const inventoryCategories = [
   'Beverages',
   'Snacks',
   'Dairy',
+  'Packaging',
+  'Other',
 ];
 
 export const inventoryProducts = [

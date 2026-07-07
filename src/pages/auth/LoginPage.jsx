@@ -8,12 +8,13 @@ import {
   Sparkles,
   TrendingUp,
 } from 'lucide-react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import Badge from '../../components/common/Badge.jsx';
 import Button from '../../components/common/Button.jsx';
 import Card from '../../components/common/Card.jsx';
 import Input from '../../components/common/Input.jsx';
 import AuthLayout from '../../components/layout/AuthLayout.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
 import { authPreviewMetrics } from '../../data/mockData.js';
 import { isValidEmail } from '../../utils/validators.js';
 
@@ -85,15 +86,20 @@ function LoginBrandPanel() {
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { clearError, login } = useAuth();
   const [values, setValues] = useState(initialValues);
   const [errors, setErrors] = useState({});
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
+  const redirectTo = location.state?.from?.pathname || '/dashboard';
+
   function updateField(event) {
     const { name, value } = event.target;
     setValues((current) => ({ ...current, [name]: value }));
     setErrors((current) => ({ ...current, [name]: undefined }));
+    clearError();
   }
 
   function validate() {
@@ -113,7 +119,7 @@ export default function LoginPage() {
     return Object.keys(nextErrors).length === 0;
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
 
     if (!validate()) {
@@ -121,9 +127,16 @@ export default function LoginPage() {
     }
 
     setIsLoading(true);
-    window.setTimeout(() => {
-      navigate('/dashboard');
-    }, 850);
+    setErrors({});
+
+    try {
+      await login(values.email, values.password);
+      navigate(redirectTo, { replace: true });
+    } catch (error) {
+      setErrors({ form: error.message });
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   return (
@@ -145,6 +158,12 @@ export default function LoginPage() {
         </div>
 
         <form className="mt-8 space-y-4" noValidate onSubmit={handleSubmit}>
+          {errors.form ? (
+            <div className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+              {errors.form}
+            </div>
+          ) : null}
+
           <Input
             autoComplete="email"
             error={errors.email}
@@ -185,6 +204,12 @@ export default function LoginPage() {
           <div className="flex justify-end">
             <Link
               className="text-sm font-bold text-indigo-600 transition hover:text-indigo-700"
+              onClick={(event) => {
+                event.preventDefault();
+                setErrors({
+                  form: 'Password recovery will be enabled after recovery email templates are configured.',
+                });
+              }}
               to="/login"
             >
               Forgot password?
@@ -201,7 +226,7 @@ export default function LoginPage() {
             Login
           </Button>
 
-          <Button className="w-full" rounded="2xl" size="lg" variant="secondary">
+          <Button className="w-full" rounded="2xl" size="lg" type="button" variant="secondary">
             <ShieldCheck className="h-4 w-4" />
             Continue with Google
           </Button>

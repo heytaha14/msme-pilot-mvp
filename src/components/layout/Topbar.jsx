@@ -1,15 +1,21 @@
 import { Bell, FileScan, Search, Settings } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import { useAuth } from '../../context/AuthContext.jsx';
 import Button from '../common/Button.jsx';
 import Input from '../common/Input.jsx';
 
 export default function Topbar({ title }) {
+  const { profile, user } = useAuth();
+  const ownerName = profile?.ownerName || user?.name || user?.email || 'Taha';
+  const businessName = profile?.businessName || 'MSME Pilot';
+  const initial = ownerName.charAt(0).toUpperCase();
+
   return (
     <header className="sticky top-0 z-20 border-b border-white/70 bg-slate-50/80 px-4 py-4 backdrop-blur-xl sm:px-6 lg:px-8">
       <div className="mx-auto flex max-w-7xl items-center gap-4">
         <div className="min-w-0 flex-1">
           <p className="text-xs font-semibold uppercase tracking-[0.18em] text-indigo-500">
-            MSME Pilot
+            {businessName}
           </p>
           <h1 className="mt-1 truncate text-2xl font-bold tracking-tight text-slate-950">
             {title}
@@ -49,7 +55,7 @@ export default function Topbar({ title }) {
             className="grid h-10 w-10 place-items-center rounded-full bg-slate-950 text-sm font-bold text-white transition hover:bg-indigo-700"
             to="/profile"
           >
-            T
+            {initial}
           </Link>
         </div>
       </div>

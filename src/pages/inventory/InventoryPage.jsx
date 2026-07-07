@@ -4,10 +4,12 @@ import {
   Download,
   Eye,
   IndianRupee,
+  Loader2,
   PackageCheck,
   PackageOpen,
   PackagePlus,
   Pencil,
+  RefreshCw,
   Search,
   SearchX,
   Sparkles,
@@ -18,7 +20,7 @@ import {
   WandSparkles,
   X,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import Badge from '../../components/common/Badge.jsx';
 import Button from '../../components/common/Button.jsx';
@@ -26,14 +28,25 @@ import Card from '../../components/common/Card.jsx';
 import Input from '../../components/common/Input.jsx';
 import SectionHeader from '../../components/common/SectionHeader.jsx';
 import StatCard from '../../components/common/StatCard.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
 import {
   inventoryCategories,
   inventoryProducts,
 } from '../../data/mockData.js';
 import {
+  createProduct,
+  deleteProduct,
+  getProductStats,
+  listProducts,
+  updateProduct,
+} from '../../services/productService.js';
+import {
+  calculateMarginPercentage,
   calculateProductValue,
+  calculateProfitPerUnit,
   formatCurrency,
   formatDate,
+  formatPercentage,
   getStockBadgeVariant,
   getStockStatus,
 } from '../../utils/formatters.js';
@@ -51,6 +64,8 @@ const emptyProductForm = {
   gstPercentage: '',
   currentStock: '',
   minimumStock: '',
+  unit: '',
+  notes: '',
 };
 
 function productInitials(productName) {
@@ -135,7 +150,7 @@ function InventoryFilters({ filters, onChange, onClear }) {
 function ProductAvatar({ product }) {
   return (
     <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-indigo-50 text-sm font-black text-indigo-600 ring-1 ring-indigo-100">
-      {product.productImage || productInitials(product.productName)}
+      {product.productImage || productInitials(product.productName || product.name || 'Product')}
     </div>
   );
 }
@@ -335,7 +350,7 @@ function ModalShell({ children, onClose, size = 'max-w-2xl' }) {
   );
 }
 
-function ProductModal({ mode, onClose, onSave, product }) {
+function ProductModal({ formError, isSaving, mode, onClose, onSave, product }) {
   const [values, setValues] = useState(() => {
     if (!product) {
       return emptyProductForm;
@@ -351,6 +366,8 @@ function ProductModal({ mode, onClose, onSave, product }) {
       gstPercentage: String(product.gstPercentage),
       currentStock: String(product.currentStock),
       minimumStock: String(product.minimumStock),
+      unit: product.unit || '',
+      notes: product.notes || '',
     };
   });
   const [errors, setErrors] = useState({});
@@ -379,32 +396,37 @@ function ProductModal({ mode, onClose, onSave, product }) {
       }
     });
 
+    ['purchasePrice', 'sellingPrice', 'currentStock', 'minimumStock', 'gstPercentage'].forEach((field) => {
+      if (values[field] !== '' && Number(values[field]) < 0) {
+        nextErrors[field] = 'Value must be 0 or more.';
+      }
+    });
+
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
 
     if (!validate()) {
       return;
     }
 
-    const now = new Date().toISOString();
-    onSave({
-      id: product?.id ?? Date.now(),
+    await onSave({
+      id: product?.id,
       productName: values.productName.trim(),
       category: values.category,
       supplier: values.supplier.trim(),
-      barcode: values.barcode.trim() || `890${Date.now().toString().slice(-7)}`,
+      barcode: values.barcode.trim(),
       purchasePrice: Number(values.purchasePrice),
       sellingPrice: Number(values.sellingPrice),
       gstPercentage: Number(values.gstPercentage || 0),
       currentStock: Number(values.currentStock),
       minimumStock: Number(values.minimumStock),
+      unit: values.unit.trim(),
+      notes: values.notes.trim(),
       productImage: product?.productImage || productInitials(values.productName),
-      createdAt: product?.createdAt ?? now,
-      updatedAt: now,
     });
   }
 
@@ -443,6 +465,12 @@ function ProductModal({ mode, onClose, onSave, product }) {
             </div>
           </div>
         </div>
+
+        {formError ? (
+          <div className="mt-5 rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+            {formError}
+          </div>
+        ) : null}
 
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
           <Input
@@ -528,13 +556,33 @@ function ProductModal({ mode, onClose, onSave, product }) {
             type="number"
             value={values.minimumStock}
           />
+          <Input
+            label="Unit"
+            name="unit"
+            onChange={updateField}
+            placeholder="kg, pcs, bags"
+            value={values.unit}
+          />
+          <label className="block sm:col-span-2" htmlFor="notes">
+            <span className="mb-2 block text-sm font-semibold text-slate-700">
+              Notes
+            </span>
+            <textarea
+              className="min-h-24 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition-all placeholder:text-slate-400 focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
+              id="notes"
+              name="notes"
+              onChange={updateField}
+              placeholder="Optional product notes"
+              value={values.notes}
+            />
+          </label>
         </div>
 
         <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
           <Button onClick={onClose} rounded="2xl" type="button" variant="secondary">
             Cancel
           </Button>
-          <Button rounded="2xl" type="submit">
+          <Button loading={isSaving} rounded="2xl" type="submit">
             {mode === 'edit' ? 'Save Changes' : 'Save Product'}
           </Button>
         </div>
@@ -548,14 +596,19 @@ function ProductDetailsModal({ onClose, product }) {
   const details = [
     ['Category', product.category],
     ['Supplier', product.supplier],
-    ['Barcode', product.barcode],
+    ['Barcode', product.barcode || 'Not added'],
     ['Purchase price', formatCurrency(product.purchasePrice)],
     ['Selling price', formatCurrency(product.sellingPrice)],
     ['GST', `${product.gstPercentage}%`],
     ['Current stock', product.currentStock],
     ['Minimum stock', product.minimumStock],
+    ['Unit', product.unit || 'Not set'],
     ['Estimated stock value', formatCurrency(calculateProductValue(product))],
+    ['Profit per unit', formatCurrency(calculateProfitPerUnit(product))],
+    ['Margin', formatPercentage(calculateMarginPercentage(product))],
+    ['Created date', formatDate(product.createdAt || product.$createdAt)],
     ['Last updated', formatDate(product.updatedAt)],
+    ['Notes', product.notes || 'No notes added'],
   ];
 
   return (
@@ -598,7 +651,7 @@ function ProductDetailsModal({ onClose, product }) {
   );
 }
 
-function DeleteConfirmModal({ onCancel, onConfirm, product }) {
+function DeleteConfirmModal({ isDeleting, onCancel, onConfirm, product }) {
   return (
     <ModalShell onClose={onCancel} size="max-w-md">
       <div className="p-5 sm:p-6">
@@ -609,14 +662,14 @@ function DeleteConfirmModal({ onCancel, onConfirm, product }) {
           Delete this product from inventory?
         </h2>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          {product.productName} will be removed from this local UI list. No backend
-          data is touched.
+          {product.productName} will be removed from your Appwrite inventory.
+          This action only affects your authenticated workspace.
         </p>
         <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
           <Button onClick={onCancel} rounded="2xl" variant="secondary">
             Cancel
           </Button>
-          <Button onClick={onConfirm} rounded="2xl" variant="danger">
+          <Button loading={isDeleting} onClick={onConfirm} rounded="2xl" variant="danger">
             Delete Product
           </Button>
         </div>
@@ -642,8 +695,55 @@ function EmptyState({ onClear }) {
   );
 }
 
+function FirstTimeEmptyState({ isSeeding, onAddProduct, onSeedDemo }) {
+  return (
+    <Card className="text-center" padding="lg">
+      <div className="mx-auto grid h-16 w-16 place-items-center rounded-3xl bg-indigo-50 text-indigo-600">
+        <PackageOpen className="h-8 w-8" />
+      </div>
+      <h2 className="mt-5 text-2xl font-black text-slate-950">No products yet</h2>
+      <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
+        Add your first product to start tracking stock, value, and reorder alerts.
+      </p>
+      <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
+        <Button onClick={onAddProduct}>
+          <PackagePlus className="h-4 w-4" />
+          Add Product
+        </Button>
+        <Button loading={isSeeding} onClick={onSeedDemo} variant="secondary">
+          Load Demo Products
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+function InventoryLoadingState() {
+  return (
+    <Card padding="lg">
+      <div className="flex flex-col items-center justify-center py-8 text-center">
+        <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
+        <h2 className="mt-4 text-xl font-black text-slate-950">
+          Loading your inventory
+        </h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Fetching products from your Appwrite workspace...
+        </p>
+      </div>
+    </Card>
+  );
+}
+
 export default function InventoryPage() {
-  const [products, setProducts] = useState(inventoryProducts);
+  const { user } = useAuth();
+  const [products, setProducts] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSeeding, setIsSeeding] = useState(false);
+  const [mutationLoading, setMutationLoading] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
+  const [formError, setFormError] = useState('');
   const [filters, setFilters] = useState({
     search: '',
     category: 'All Categories',
@@ -652,6 +752,66 @@ export default function InventoryPage() {
   });
   const [modalState, setModalState] = useState({ type: null, product: null });
 
+  const showSuccess = useCallback((message) => {
+    setSuccessMessage(message);
+    window.setTimeout(() => setSuccessMessage(''), 2800);
+  }, []);
+
+  const loadInventory = useCallback(
+    async ({ refreshing = false } = {}) => {
+      if (!user?.$id) return;
+
+      setErrorMessage('');
+      if (refreshing) {
+        setIsRefreshing(true);
+      } else {
+        setIsLoading(true);
+      }
+
+      try {
+        setProducts(await listProducts(user.$id));
+      } catch (error) {
+        setErrorMessage(error.message);
+      } finally {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
+    },
+    [user?.$id],
+  );
+
+  useEffect(() => {
+    loadInventory();
+  }, [loadInventory]);
+
+  const productStats = useMemo(() => getProductStats(products), [products]);
+
+  const aiInsight = useMemo(() => {
+    const lowStockProducts = products.filter((product) => getStockStatus(product) === 'Low Stock');
+
+    if (!products.length) {
+      return 'Add your first products and MSME Pilot will start tracking reorder alerts automatically.';
+    }
+
+    const sugar = lowStockProducts.find((product) =>
+      product.productName.toLowerCase().includes('sugar'),
+    );
+
+    if (sugar) {
+      return 'Sugar is below minimum stock. Reorder soon to avoid missed sales.';
+    }
+
+    if (lowStockProducts.length > 1) {
+      return `You have ${lowStockProducts.length} low-stock products. Restock fast-moving items before the weekend.`;
+    }
+
+    if (lowStockProducts.length === 1) {
+      return `${lowStockProducts[0].productName} is below minimum stock. Reorder soon to keep shelves ready.`;
+    }
+
+    return 'Inventory is healthy. No urgent reorder needed today.';
+  }, [products]);
+
   const filteredProducts = useMemo(() => {
     const searchTerm = filters.search.trim().toLowerCase();
     const nextProducts = products.filter((product) => {
@@ -659,14 +819,14 @@ export default function InventoryPage() {
       const matchesSearch =
         !searchTerm ||
         product.productName.toLowerCase().includes(searchTerm) ||
-        product.barcode.toLowerCase().includes(searchTerm) ||
-        product.supplier.toLowerCase().includes(searchTerm);
+        String(product.barcode || '').toLowerCase().includes(searchTerm) ||
+        String(product.supplier || '').toLowerCase().includes(searchTerm) ||
+        String(product.category || '').toLowerCase().includes(searchTerm);
       const matchesCategory =
         filters.category === 'All Categories' || product.category === filters.category;
       const matchesStock =
         filters.stockStatus === 'All Stock' ||
-        status === filters.stockStatus ||
-        (filters.stockStatus === 'Low Stock' && status === 'Critical');
+        status === filters.stockStatus;
 
       return matchesSearch && matchesCategory && matchesStock;
     });
@@ -684,7 +844,7 @@ export default function InventoryPage() {
         return calculateProductValue(b) - calculateProductValue(a);
       }
 
-      return new Date(b.createdAt) - new Date(a.createdAt);
+      return new Date(b.createdAt || b.$createdAt) - new Date(a.createdAt || a.$createdAt);
     });
   }, [filters, products]);
 
@@ -702,24 +862,115 @@ export default function InventoryPage() {
     });
   }
 
-  function saveProduct(product) {
-    setProducts((current) => {
-      const exists = current.some((item) => item.id === product.id);
-
-      if (exists) {
-        return current.map((item) => (item.id === product.id ? product : item));
-      }
-
-      return [product, ...current];
-    });
-    setModalState({ type: null, product: null });
+  function openProductModal(type, product = null) {
+    setFormError('');
+    setModalState({ type, product });
   }
 
-  function confirmDelete() {
-    setProducts((current) =>
-      current.filter((product) => product.id !== modalState.product.id),
+  async function saveProduct(product) {
+    if (!user?.$id) {
+      setFormError('You must be logged in to manage inventory.');
+      return;
+    }
+
+    setMutationLoading(true);
+    setFormError('');
+    setErrorMessage('');
+
+    try {
+      if (modalState.type === 'edit') {
+        const updatedProduct = await updateProduct(user.$id, modalState.product.id, product);
+        setProducts((current) =>
+          current.map((item) => (item.id === updatedProduct.id ? updatedProduct : item)),
+        );
+        showSuccess('Product updated successfully.');
+      } else {
+        const createdProduct = await createProduct(user.$id, product);
+        setProducts((current) => [createdProduct, ...current]);
+        showSuccess('Product added successfully.');
+      }
+
+      setModalState({ type: null, product: null });
+    } catch (error) {
+      setFormError(error.message);
+    } finally {
+      setMutationLoading(false);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!user?.$id || !modalState.product) return;
+
+    setMutationLoading(true);
+    setErrorMessage('');
+
+    try {
+      await deleteProduct(user.$id, modalState.product.id);
+      setProducts((current) =>
+        current.filter((product) => product.id !== modalState.product.id),
+      );
+      setModalState({ type: null, product: null });
+      showSuccess('Product deleted successfully.');
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setMutationLoading(false);
+    }
+  }
+
+  async function seedDemoProducts() {
+    if (!user?.$id) {
+      setErrorMessage('You must be logged in to seed demo products.');
+      return;
+    }
+
+    if (
+      products.length > 0 &&
+      !window.confirm('You already have products. Add demo products anyway?')
+    ) {
+      return;
+    }
+
+    const existingKeys = new Set(
+      products.flatMap((product) => [
+        String(product.barcode || '').toLowerCase(),
+        String(product.productName || '').toLowerCase(),
+      ]),
     );
-    setModalState({ type: null, product: null });
+    const seedProducts = inventoryProducts.filter(
+      (product) =>
+        !existingKeys.has(String(product.barcode || '').toLowerCase()) &&
+        !existingKeys.has(String(product.productName || '').toLowerCase()),
+    );
+
+    if (!seedProducts.length) {
+      showSuccess('Demo products already exist in this inventory.');
+      return;
+    }
+
+    setIsSeeding(true);
+    setErrorMessage('');
+
+    try {
+      const createdProducts = [];
+
+      for (const product of seedProducts) {
+        createdProducts.push(
+          await createProduct(user.$id, {
+            ...product,
+            unit: 'pcs',
+            notes: 'Demo product seeded from MSME Pilot sample data.',
+          }),
+        );
+      }
+
+      setProducts((current) => [...createdProducts, ...current]);
+      showSuccess(`${createdProducts.length} demo products added successfully.`);
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setIsSeeding(false);
+    }
   }
 
   return (
@@ -727,11 +978,19 @@ export default function InventoryPage() {
       <SectionHeader
         action={
           <div className="flex flex-col gap-3 sm:flex-row">
+            <Button
+              loading={isRefreshing}
+              onClick={() => loadInventory({ refreshing: true })}
+              variant="secondary"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Refresh
+            </Button>
             <Button variant="secondary">
               <Download className="h-4 w-4" />
               Export
             </Button>
-            <Button onClick={() => setModalState({ type: 'add', product: null })}>
+            <Button onClick={() => openProductModal('add')}>
               <PackagePlus className="h-4 w-4" />
               Add Product
             </Button>
@@ -741,34 +1000,60 @@ export default function InventoryPage() {
         title="Inventory"
       />
 
+      <AnimatePresence>
+        {successMessage ? (
+          <motion.div
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            initial={{ opacity: 0, y: -8 }}
+          >
+            <Card className="border-emerald-100 bg-emerald-50/90" padding="sm">
+              <div className="flex items-center gap-3 text-sm font-bold text-emerald-700">
+                <PackageCheck className="h-4 w-4" />
+                {successMessage}
+              </div>
+            </Card>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      {errorMessage ? (
+        <Card className="border-rose-100 bg-rose-50/90" padding="sm">
+          <div className="flex items-start gap-3 text-sm font-semibold text-rose-700">
+            <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+            <p>{errorMessage}</p>
+          </div>
+        </Card>
+      ) : null}
+
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           icon={Boxes}
           status="info"
           title="Total Products"
           trend="Across all store categories"
-          value="231"
+          value={productStats.totalProducts}
         />
         <StatCard
           icon={TriangleAlert}
           status="warning"
           title="Low Stock"
           trend="Needs reorder planning"
-          value="7"
+          value={productStats.lowStockCount}
         />
         <StatCard
           icon={IndianRupee}
           status="success"
           title="Inventory Value"
           trend="Estimated current value"
-          value="₹8,42,000"
+          value={formatCurrency(productStats.inventoryValue)}
         />
         <StatCard
           icon={Tags}
           status="neutral"
           title="Categories"
           trend="Active product groups"
-          value="12"
+          value={productStats.categoriesCount}
         />
       </section>
 
@@ -782,8 +1067,7 @@ export default function InventoryPage() {
               AI Insight
             </Badge>
             <p className="mt-3 max-w-3xl text-lg font-bold leading-7 text-white">
-              Rice and Sugar are below minimum stock. Reorder before Friday to
-              avoid weekend shortages.
+              {aiInsight}
             </p>
           </div>
           <Button variant="secondary">
@@ -804,22 +1088,30 @@ export default function InventoryPage() {
           <div>
             <h2 className="text-xl font-black text-slate-950">Product Stock</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Showing {filteredProducts.length} of {products.length} local demo products.
+              Showing {filteredProducts.length} of {products.length} Appwrite products.
             </p>
           </div>
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-500">
             <PackageCheck className="h-4 w-4 text-emerald-500" />
-            Local state only
+            Per-user Appwrite data
           </div>
         </div>
       </Card>
 
-      {filteredProducts.length ? (
+      {isLoading ? (
+        <InventoryLoadingState />
+      ) : !products.length ? (
+        <FirstTimeEmptyState
+          isSeeding={isSeeding}
+          onAddProduct={() => openProductModal('add')}
+          onSeedDemo={seedDemoProducts}
+        />
+      ) : filteredProducts.length ? (
         <>
           <ProductTable
-            onDelete={(product) => setModalState({ type: 'delete', product })}
-            onEdit={(product) => setModalState({ type: 'edit', product })}
-            onView={(product) => setModalState({ type: 'view', product })}
+            onDelete={(product) => openProductModal('delete', product)}
+            onEdit={(product) => openProductModal('edit', product)}
+            onView={(product) => openProductModal('view', product)}
             products={filteredProducts}
           />
           <div className="grid gap-4 xl:hidden">
@@ -827,13 +1119,13 @@ export default function InventoryPage() {
               <ProductCard
                 key={product.id}
                 onDelete={(selectedProduct) =>
-                  setModalState({ type: 'delete', product: selectedProduct })
+                  openProductModal('delete', selectedProduct)
                 }
                 onEdit={(selectedProduct) =>
-                  setModalState({ type: 'edit', product: selectedProduct })
+                  openProductModal('edit', selectedProduct)
                 }
                 onView={(selectedProduct) =>
-                  setModalState({ type: 'view', product: selectedProduct })
+                  openProductModal('view', selectedProduct)
                 }
                 product={product}
               />
@@ -844,15 +1136,19 @@ export default function InventoryPage() {
         <EmptyState onClear={clearFilters} />
       )}
 
-      <Card className="xl:hidden">
-        <div className="flex items-center gap-3 text-sm text-slate-500">
-          <PackageOpen className="h-5 w-5 text-indigo-500" />
-          Product cards replace the desktop table on mobile for easier scanning.
-        </div>
-      </Card>
+      {!isLoading && products.length ? (
+        <Card className="xl:hidden">
+          <div className="flex items-center gap-3 text-sm text-slate-500">
+            <PackageOpen className="h-5 w-5 text-indigo-500" />
+            Product cards replace the desktop table on mobile for easier scanning.
+          </div>
+        </Card>
+      ) : null}
 
       {modalState.type === 'add' || modalState.type === 'edit' ? (
         <ProductModal
+          formError={formError}
+          isSaving={mutationLoading}
           mode={modalState.type}
           onClose={() => setModalState({ type: null, product: null })}
           onSave={saveProduct}
@@ -869,6 +1165,7 @@ export default function InventoryPage() {
 
       {modalState.type === 'delete' && modalState.product ? (
         <DeleteConfirmModal
+          isDeleting={mutationLoading}
           onCancel={() => setModalState({ type: null, product: null })}
           onConfirm={confirmDelete}
           product={modalState.product}

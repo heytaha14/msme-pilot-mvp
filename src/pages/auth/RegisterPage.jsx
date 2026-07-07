@@ -20,6 +20,7 @@ import Button from '../../components/common/Button.jsx';
 import Card from '../../components/common/Card.jsx';
 import Input from '../../components/common/Input.jsx';
 import AuthLayout from '../../components/layout/AuthLayout.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
 import {
   businessMetrics,
   businessTypeOptions,
@@ -159,6 +160,7 @@ function RegisterPreviewPanel() {
 
 export default function RegisterPage() {
   const navigate = useNavigate();
+  const { clearError, register } = useAuth();
   const [values, setValues] = useState(initialValues);
   const [errors, setErrors] = useState({});
   const [isLoading, setIsLoading] = useState(false);
@@ -171,6 +173,7 @@ export default function RegisterPage() {
     const { name, value } = event.target;
     setValues((current) => ({ ...current, [name]: value }));
     setErrors((current) => ({ ...current, [name]: undefined }));
+    clearError();
   }
 
   function validate() {
@@ -202,6 +205,8 @@ export default function RegisterPage() {
 
     if (!values.password) {
       nextErrors.password = 'Password is required.';
+    } else if (values.password.length < 8) {
+      nextErrors.password = 'Password must be at least 8 characters.';
     }
 
     if (!values.confirmPassword) {
@@ -214,7 +219,7 @@ export default function RegisterPage() {
     return Object.keys(nextErrors).length === 0;
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
 
     if (!validate()) {
@@ -222,9 +227,23 @@ export default function RegisterPage() {
     }
 
     setIsLoading(true);
-    window.setTimeout(() => {
-      navigate('/dashboard');
-    }, 850);
+    setErrors({});
+
+    try {
+      await register({
+        ownerName: values.ownerName.trim(),
+        businessName: values.businessName.trim(),
+        businessType: values.businessType,
+        email: values.email.trim(),
+        phone: values.phone.trim(),
+        password: values.password,
+      });
+      navigate('/dashboard', { replace: true });
+    } catch (error) {
+      setErrors({ form: error.message });
+    } finally {
+      setIsLoading(false);
+    }
   }
 
   function passwordToggle(field) {
@@ -267,6 +286,12 @@ export default function RegisterPage() {
         </div>
 
         <form className="mt-8 space-y-5" noValidate onSubmit={handleSubmit}>
+          {errors.form ? (
+            <div className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+              {errors.form}
+            </div>
+          ) : null}
+
           <div className="grid gap-4 sm:grid-cols-2">
             <Input
               autoComplete="name"
@@ -362,7 +387,7 @@ export default function RegisterPage() {
             >
               Create Account
             </Button>
-            <Button className="w-full" rounded="2xl" size="lg" variant="secondary">
+            <Button className="w-full" rounded="2xl" size="lg" type="button" variant="secondary">
               <ShieldCheck className="h-4 w-4" />
               Continue with Google
             </Button>
