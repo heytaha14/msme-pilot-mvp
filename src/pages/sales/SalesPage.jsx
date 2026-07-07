@@ -3,13 +3,15 @@ import {
   BarChart3,
   CheckCircle2,
   CircleDollarSign,
-  CreditCard,
   Eye,
   IndianRupee,
   LineChart,
+  Loader2,
+  PackageOpen,
   Pencil,
   Plus,
   ReceiptText,
+  RefreshCw,
   Search,
   SearchX,
   Send,
@@ -20,7 +22,7 @@ import {
   WandSparkles,
   X,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import Badge from '../../components/common/Badge.jsx';
 import Button from '../../components/common/Button.jsx';
@@ -28,41 +30,60 @@ import Card from '../../components/common/Card.jsx';
 import Input from '../../components/common/Input.jsx';
 import SectionHeader from '../../components/common/SectionHeader.jsx';
 import StatCard from '../../components/common/StatCard.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
 import { sales as mockSales } from '../../data/mockData.js';
+import { listCustomers } from '../../services/customerService.js';
+import { listProducts } from '../../services/productService.js';
 import {
-  calculateSaleProfit,
-  calculateSaleTotals,
+  createSale,
+  deleteSale,
+  getSalesStats,
+  listSales,
+  markSalePaid as markSalePaidService,
+  updateSale,
+} from '../../services/salesService.js';
+import {
   formatCurrency,
   formatDate,
   getSalePaymentStatusBadge,
 } from '../../utils/formatters.js';
+import {
+  calculateDueAmount,
+  calculateSaleGstAmount,
+  calculateSaleProfit,
+  calculateSaleSubtotal,
+  calculateSaleTotalAmount,
+  deriveSalePaymentStatus,
+  normalizeSaleItem,
+} from '../../utils/salesCalculations.js';
 import { isValidIndianPhone } from '../../utils/validators.js';
 
 const paymentFilters = ['All Sales', 'Paid', 'Pending', 'Partial', 'Cancelled'];
 const dateFilters = ['Today', 'This Week', 'This Month', 'All Time'];
 const sortOptions = ['Latest', 'Highest Amount', 'Highest Profit', 'Customer Name'];
-const paymentStatuses = ['Paid', 'Pending', 'Partial', 'Cancelled'];
-
-const emptySaleForm = {
-  customerName: '',
-  customerPhone: '',
-  paymentStatus: 'Paid',
-  saleDate: '2026-07-05',
-};
-
 const emptyLineItem = {
+  productId: '',
   productName: '',
   quantity: '',
+  unit: '',
   sellingPrice: '',
+  purchasePrice: '',
   gstPercentage: '',
 };
+
+function todayInputDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function toNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
 
 function SelectControl({ children, label, name, onChange, value }) {
   return (
     <label className="block" htmlFor={name}>
-      <span className="mb-2 block text-sm font-semibold text-slate-700">
-        {label}
-      </span>
+      <span className="mb-2 block text-sm font-semibold text-slate-700">{label}</span>
       <select
         className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 outline-none transition-all focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
         id={name}
@@ -73,6 +94,38 @@ function SelectControl({ children, label, name, onChange, value }) {
         {children}
       </select>
     </label>
+  );
+}
+
+function FeedbackBanner({ message, tone = 'info', onDismiss }) {
+  if (!message) return null;
+
+  const toneClasses = {
+    success: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+    warning: 'border-amber-200 bg-amber-50 text-amber-800',
+    danger: 'border-rose-200 bg-rose-50 text-rose-800',
+    info: 'border-cyan-200 bg-cyan-50 text-cyan-800',
+  };
+
+  return (
+    <div
+      className={clsx(
+        'flex items-start justify-between gap-4 rounded-3xl border px-4 py-3 text-sm font-semibold',
+        toneClasses[tone],
+      )}
+    >
+      <p>{message}</p>
+      {onDismiss ? (
+        <button
+          aria-label="Dismiss message"
+          className="rounded-full p-1 transition hover:bg-white/60"
+          onClick={onDismiss}
+          type="button"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      ) : null}
+    </div>
   );
 }
 
@@ -142,7 +195,7 @@ function ActionButton({ disabled = false, icon: Icon, label, onClick, tone = 'sl
   );
 }
 
-function ItemPills({ items }) {
+function ItemPills({ items = [] }) {
   const visibleItems = items.slice(0, 2);
   const hiddenCount = Math.max(0, items.length - visibleItems.length);
 
@@ -151,12 +204,13 @@ function ItemPills({ items }) {
       {visibleItems.map((item) => (
         <span
           className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600"
-          key={`${item.productName}-${item.quantity}`}
+          key={`${item.id || item.productName}-${item.quantity}`}
         >
           {item.productName}
         </span>
       ))}
       {hiddenCount > 0 ? <Badge>+{hiddenCount} more</Badge> : null}
+      {!items.length ? <Badge>No items</Badge> : null}
     </div>
   );
 }
@@ -175,28 +229,41 @@ function SalesInsights({ sales }) {
 
   const highestSale = [...sales].sort((a, b) => b.totalAmount - a.totalAmount)[0];
   const bestProfit = [...sales].sort((a, b) => b.profit - a.profit)[0];
+  const pendingTotal = sales
+    .filter((sale) => ['Pending', 'Partial'].includes(sale.paymentStatus))
+    .reduce((sum, sale) => sum + Number(sale.dueAmount || 0), 0);
+  const itemCounts = sales.flatMap((sale) => sale.items).reduce((counts, item) => {
+    counts[item.productName] = (counts[item.productName] || 0) + Number(item.quantity || 0);
+    return counts;
+  }, {});
+  const fastMovingItems = Object.entries(itemCounts)
+    .sort(([, a], [, b]) => b - a)
+    .slice(0, 3)
+    .map(([name]) => name)
+    .join(', ') || 'Add more sales';
+
   const insights = [
     {
       label: 'Highest Sale',
-      value: `${highestSale.customerName} — ${formatCurrency(highestSale.totalAmount)}`,
+      value: `${highestSale.customerName} - ${formatCurrency(highestSale.totalAmount)}`,
       icon: ReceiptText,
       tone: 'text-indigo-600 bg-indigo-50',
     },
     {
       label: 'Best Profit Sale',
-      value: `${bestProfit.customerName} — ${formatCurrency(bestProfit.profit)} profit`,
+      value: `${bestProfit.customerName} - ${formatCurrency(bestProfit.profit)} profit`,
       icon: CircleDollarSign,
       tone: 'text-emerald-600 bg-emerald-50',
     },
     {
       label: 'Pending Sales',
-      value: '₹58,000',
+      value: formatCurrency(pendingTotal),
       icon: WalletCards,
       tone: 'text-amber-600 bg-amber-50',
     },
     {
       label: 'Fast-Moving Items',
-      value: 'Rice, Cooking Oil, Sugar',
+      value: fastMovingItems,
       icon: TrendingUp,
       tone: 'text-cyan-600 bg-cyan-50',
     },
@@ -237,6 +304,7 @@ function SalesTable({ onDelete, onEdit, onMarkPaid, onView, sales }) {
               <th className="px-5 py-4">Customer</th>
               <th className="px-5 py-4">Items</th>
               <th className="px-5 py-4">Total Amount</th>
+              <th className="px-5 py-4">Due</th>
               <th className="px-5 py-4">Profit</th>
               <th className="px-5 py-4">Sale Date</th>
               <th className="px-5 py-4">Payment Status</th>
@@ -245,20 +313,23 @@ function SalesTable({ onDelete, onEdit, onMarkPaid, onView, sales }) {
           </thead>
           <tbody>
             {sales.map((sale) => (
-              <tr key={sale.id}>
+              <tr className="transition hover:bg-slate-50/70" key={sale.id}>
                 <td className="border-t border-slate-100 px-5 py-4">
                   <p className="font-black text-slate-950">{sale.invoiceNumber}</p>
                   <p className="text-sm text-slate-500">{formatDate(sale.saleDate)}</p>
                 </td>
                 <td className="border-t border-slate-100 px-5 py-4">
                   <p className="font-black text-slate-950">{sale.customerName}</p>
-                  <p className="text-sm text-slate-500">{sale.customerPhone}</p>
+                  <p className="text-sm text-slate-500">{sale.customerPhone || 'No phone'}</p>
                 </td>
                 <td className="border-t border-slate-100 px-5 py-4">
                   <ItemPills items={sale.items} />
                 </td>
                 <td className="border-t border-slate-100 px-5 py-4 text-sm font-black text-slate-950">
                   {formatCurrency(sale.totalAmount)}
+                </td>
+                <td className="border-t border-slate-100 px-5 py-4 text-sm font-black text-amber-600">
+                  {formatCurrency(sale.dueAmount)}
                 </td>
                 <td className="border-t border-slate-100 px-5 py-4 text-sm font-black text-emerald-600">
                   {formatCurrency(sale.profit)}
@@ -307,9 +378,7 @@ function SaleCard({ onDelete, onEdit, onMarkPaid, onView, sale }) {
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="font-black text-slate-950">{sale.invoiceNumber}</p>
-          <p className="mt-1 text-sm font-semibold text-slate-500">
-            {sale.customerName}
-          </p>
+          <p className="mt-1 text-sm font-semibold text-slate-500">{sale.customerName}</p>
         </div>
         <Badge variant={getSalePaymentStatusBadge(sale.paymentStatus)}>
           {sale.paymentStatus}
@@ -322,25 +391,25 @@ function SaleCard({ onDelete, onEdit, onMarkPaid, onView, sale }) {
 
       <div className="mt-5 grid grid-cols-2 gap-3 rounded-3xl bg-slate-50 p-4">
         <div>
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
-            Total Amount
-          </p>
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Total Amount</p>
           <p className="mt-1 text-sm font-black text-slate-950">
             {formatCurrency(sale.totalAmount)}
           </p>
         </div>
         <div>
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
-            Profit
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Due</p>
+          <p className="mt-1 text-sm font-black text-amber-600">
+            {formatCurrency(sale.dueAmount)}
           </p>
+        </div>
+        <div>
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Profit</p>
           <p className="mt-1 text-sm font-black text-emerald-600">
             {formatCurrency(sale.profit)}
           </p>
         </div>
-        <div className="col-span-2">
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
-            Sale Date
-          </p>
+        <div>
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Sale Date</p>
           <p className="mt-1 text-sm font-black text-slate-950">
             {formatDate(sale.saleDate)}
           </p>
@@ -398,14 +467,14 @@ function ModalShell({ children, onClose, size = 'max-w-3xl' }) {
   );
 }
 
-function SaleLineItemsEditor({ errors, items, onAdd, onRemove, onUpdate }) {
+function SaleLineItemsEditor({ errors, items, onAdd, onRemove, onUpdate, products }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-4">
         <div>
           <h3 className="text-lg font-black text-slate-950">Line items</h3>
           <p className="mt-1 text-sm text-slate-500">
-            Add products sold in this invoice.
+            Select products for inventory deduction, or use custom items.
           </p>
         </div>
         <Button onClick={onAdd} size="sm" type="button" variant="secondary">
@@ -416,113 +485,193 @@ function SaleLineItemsEditor({ errors, items, onAdd, onRemove, onUpdate }) {
 
       {errors.items ? <p className="text-sm text-rose-600">{errors.items}</p> : null}
 
-      {items.map((item, index) => (
-        <div className="rounded-3xl bg-slate-50 p-4" key={index}>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-[1.3fr_0.6fr_0.7fr_0.7fr_auto] lg:items-start">
-            <Input
-              error={errors[`item-${index}-productName`]}
-              label="Product name"
-              name="productName"
-              onChange={(event) => onUpdate(index, event)}
-              placeholder="Rice"
-              value={item.productName}
-            />
-            <Input
-              error={errors[`item-${index}-quantity`]}
-              label="Quantity"
-              name="quantity"
-              onChange={(event) => onUpdate(index, event)}
-              placeholder="2"
-              type="number"
-              value={item.quantity}
-            />
-            <Input
-              error={errors[`item-${index}-sellingPrice`]}
-              label="Selling price"
-              name="sellingPrice"
-              onChange={(event) => onUpdate(index, event)}
-              placeholder="720"
-              type="number"
-              value={item.sellingPrice}
-            />
-            <Input
-              label="GST %"
-              name="gstPercentage"
-              onChange={(event) => onUpdate(index, event)}
-              placeholder="18"
-              type="number"
-              value={item.gstPercentage}
-            />
-            <button
-              aria-label="Remove item"
-              className="mt-0 grid h-12 w-full place-items-center rounded-2xl bg-rose-50 text-rose-600 transition hover:bg-rose-100 lg:mt-7 lg:w-12"
-              onClick={() => onRemove(index)}
-              type="button"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
+      {items.map((item, index) => {
+        const selectedProduct = products.find((product) => product.id === item.productId);
+        const availableStock = Number(selectedProduct?.currentStock ?? selectedProduct?.stock ?? 0);
+        const quantity = Number(item.quantity || 0);
+        const isOverStock = item.productId && quantity > availableStock;
+
+        return (
+          <div className="rounded-3xl bg-slate-50 p-4" key={index}>
+            <div className="grid gap-3 lg:grid-cols-[1fr_1fr_0.55fr_0.65fr_0.55fr_auto] lg:items-start">
+              <SelectControl
+                label="Product"
+                name="productId"
+                onChange={(event) => onUpdate(index, event)}
+                value={item.productId}
+              >
+                <option value="">Custom item</option>
+                {products.map((product) => (
+                  <option key={product.id} value={product.id}>
+                    {product.productName} - stock {product.currentStock}
+                  </option>
+                ))}
+              </SelectControl>
+              <Input
+                error={errors[`item-${index}-productName`]}
+                label="Product name"
+                name="productName"
+                onChange={(event) => onUpdate(index, event)}
+                placeholder="Rice"
+                readOnly={Boolean(item.productId)}
+                value={item.productName}
+              />
+              <Input
+                error={errors[`item-${index}-quantity`]}
+                label="Quantity"
+                name="quantity"
+                onChange={(event) => onUpdate(index, event)}
+                placeholder="2"
+                type="number"
+                value={item.quantity}
+              />
+              <Input
+                error={errors[`item-${index}-sellingPrice`]}
+                label="Selling price"
+                name="sellingPrice"
+                onChange={(event) => onUpdate(index, event)}
+                placeholder="720"
+                type="number"
+                value={item.sellingPrice}
+              />
+              <Input
+                label="GST %"
+                name="gstPercentage"
+                onChange={(event) => onUpdate(index, event)}
+                placeholder="18"
+                type="number"
+                value={item.gstPercentage}
+              />
+              <button
+                aria-label="Remove item"
+                className="mt-0 grid h-12 w-full place-items-center rounded-2xl bg-rose-50 text-rose-600 transition hover:bg-rose-100 lg:mt-7 lg:w-12"
+                onClick={() => onRemove(index)}
+                type="button"
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            </div>
+            {item.productId ? (
+              <p
+                className={clsx(
+                  'mt-3 text-sm font-semibold',
+                  isOverStock ? 'text-rose-600' : 'text-slate-500',
+                )}
+              >
+                Available stock: {availableStock}. Selling this item will deduct stock.
+              </p>
+            ) : null}
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
 
-function SaleModal({ mode, onClose, onSave, sale }) {
-  const [values, setValues] = useState(() => {
-    if (!sale) {
-      return emptySaleForm;
-    }
+function ReadOnlyItems({ items }) {
+  return (
+    <div className="rounded-3xl border border-slate-100 bg-slate-50 p-4">
+      <p className="text-sm font-semibold text-slate-500">
+        Line item editing after posting is disabled to protect inventory accuracy.
+      </p>
+      <div className="mt-4 space-y-2">
+        {items.map((item) => (
+          <div
+            className="flex flex-col gap-1 rounded-2xl bg-white p-3 text-sm sm:flex-row sm:items-center sm:justify-between"
+            key={item.id || `${item.productName}-${item.quantity}`}
+          >
+            <span className="font-black text-slate-950">{item.productName}</span>
+            <span className="font-semibold text-slate-500">
+              Qty {item.quantity} {item.unit || ''} - {formatCurrency(item.lineTotal)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
-    return {
-      customerName: sale.customerName,
-      customerPhone: sale.customerPhone,
-      paymentStatus: sale.paymentStatus,
-      saleDate: sale.saleDate,
-    };
-  });
+function SaleModal({ customers, mode, onClose, onSave, products, sale, saving }) {
+  const [values, setValues] = useState(() => ({
+    customerId: sale?.customerId || '',
+    customerName: sale?.customerName || '',
+    customerPhone: sale?.customerPhone || '',
+    saleDate: sale?.saleDate || todayInputDate(),
+    paidAmount: String(sale?.paidAmount ?? 0),
+    notes: sale?.notes || '',
+    paymentStatus: sale?.paymentStatus || 'Pending',
+  }));
   const [items, setItems] = useState(() =>
     sale
       ? sale.items.map((item) => ({
+          productId: item.productId || '',
           productName: item.productName,
           quantity: String(item.quantity),
+          unit: item.unit || '',
           sellingPrice: String(item.sellingPrice),
-          gstPercentage: String(item.gstPercentage),
-          purchasePrice: item.purchasePrice,
+          purchasePrice: String(item.purchasePrice || 0),
+          gstPercentage: String(item.gstPercentage || 0),
         }))
       : [{ ...emptyLineItem }],
   );
   const [errors, setErrors] = useState({});
 
-  const calculatedItems = items.map((item) => {
-    const quantity = Number(item.quantity || 0);
-    const sellingPrice = Number(item.sellingPrice || 0);
-    const gstPercentage = Number(item.gstPercentage || 0);
-    const taxableAmount = quantity * sellingPrice;
-
-    return {
-      ...item,
-      quantity,
-      sellingPrice,
-      gstPercentage,
-      lineTotal: taxableAmount + (taxableAmount * gstPercentage) / 100,
-    };
-  });
-  const totals = calculateSaleTotals(calculatedItems);
-  const estimatedProfit = calculateSaleProfit(calculatedItems);
+  const calculatedItems = useMemo(() => items.map(normalizeSaleItem), [items]);
+  const subtotal = calculateSaleSubtotal(calculatedItems);
+  const gstAmount = calculateSaleGstAmount(calculatedItems);
+  const totalAmount = calculateSaleTotalAmount(calculatedItems);
+  const profit = calculateSaleProfit(calculatedItems);
+  const paidAmount = Math.min(toNumber(values.paidAmount), totalAmount);
+  const dueAmount = calculateDueAmount(totalAmount, paidAmount);
+  const derivedPaymentStatus = deriveSalePaymentStatus(
+    totalAmount,
+    paidAmount,
+    values.paymentStatus,
+  );
 
   function updateField(event) {
     const { name, value } = event.target;
+
+    if (name === 'customerId') {
+      const customer = customers.find((item) => item.id === value);
+      setValues((current) => ({
+        ...current,
+        customerId: value,
+        customerName: customer ? customer.name : '',
+        customerPhone: customer ? customer.phone : '',
+      }));
+      setErrors((current) => ({ ...current, customerName: undefined }));
+      return;
+    }
+
     setValues((current) => ({ ...current, [name]: value }));
     setErrors((current) => ({ ...current, [name]: undefined }));
   }
 
   function updateItem(index, event) {
     const { name, value } = event.target;
+
     setItems((current) =>
-      current.map((item, itemIndex) =>
-        itemIndex === index ? { ...item, [name]: value } : item,
-      ),
+      current.map((item, itemIndex) => {
+        if (itemIndex !== index) return item;
+
+        if (name === 'productId') {
+          const product = products.find((entry) => entry.id === value);
+          return product
+            ? {
+                ...item,
+                productId: value,
+                productName: product.productName,
+                unit: product.unit || '',
+                sellingPrice: String(product.sellingPrice || ''),
+                purchasePrice: String(product.purchasePrice || 0),
+                gstPercentage: String(product.gstPercentage || 0),
+              }
+            : { ...emptyLineItem, quantity: item.quantity };
+        }
+
+        return { ...item, [name]: value };
+      }),
     );
     setErrors((current) => ({ ...current, [`item-${index}-${name}`]: undefined }));
   }
@@ -544,29 +693,41 @@ function SaleModal({ mode, onClose, onSave, sale }) {
       nextErrors.customerName = 'Customer name is required.';
     }
 
-    if (!values.customerPhone.trim()) {
-      nextErrors.customerPhone = 'Customer phone is required.';
-    } else if (!isValidIndianPhone(values.customerPhone)) {
+    if (values.customerPhone.trim() && !isValidIndianPhone(values.customerPhone)) {
       nextErrors.customerPhone = 'Enter a valid 10-digit Indian mobile number.';
     }
 
-    if (!items.length) {
-      nextErrors.items = 'At least one item is required.';
+    if (toNumber(values.paidAmount) < 0) {
+      nextErrors.paidAmount = 'Paid amount must be 0 or more.';
     }
 
-    items.forEach((item, index) => {
-      if (!item.productName.trim()) {
-        nextErrors[`item-${index}-productName`] = 'Product name is required.';
+    if (mode !== 'edit') {
+      if (!items.length) {
+        nextErrors.items = 'At least one item is required.';
       }
 
-      if (!item.quantity || Number(item.quantity) <= 0) {
-        nextErrors[`item-${index}-quantity`] = 'Quantity must be greater than 0.';
-      }
+      items.forEach((item, index) => {
+        const selectedProduct = products.find((product) => product.id === item.productId);
+        const availableStock = Number(selectedProduct?.currentStock ?? selectedProduct?.stock ?? 0);
 
-      if (!item.sellingPrice || Number(item.sellingPrice) <= 0) {
-        nextErrors[`item-${index}-sellingPrice`] = 'Selling price must be greater than 0.';
-      }
-    });
+        if (!item.productName.trim()) {
+          nextErrors[`item-${index}-productName`] = 'Product name is required.';
+        }
+
+        if (!item.quantity || Number(item.quantity) <= 0) {
+          nextErrors[`item-${index}-quantity`] = 'Quantity must be greater than 0.';
+        }
+
+        if (!item.sellingPrice || Number(item.sellingPrice) <= 0) {
+          nextErrors[`item-${index}-sellingPrice`] = 'Selling price must be greater than 0.';
+        }
+
+        if (item.productId && Number(item.quantity) > availableStock) {
+          nextErrors[`item-${index}-quantity`] =
+            `Only ${availableStock} units available for ${selectedProduct.productName}.`;
+        }
+      });
+    }
 
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
@@ -579,28 +740,16 @@ function SaleModal({ mode, onClose, onSave, sale }) {
       return;
     }
 
-    const now = new Date().toISOString();
     onSave({
-      id: sale?.id ?? Date.now(),
-      invoiceNumber: sale?.invoiceNumber,
+      id: sale?.id,
+      customerId: values.customerId,
       customerName: values.customerName.trim(),
       customerPhone: values.customerPhone.trim(),
-      items: calculatedItems.map((item) => ({
-        productName: item.productName.trim(),
-        quantity: item.quantity,
-        sellingPrice: item.sellingPrice,
-        purchasePrice: item.purchasePrice,
-        gstPercentage: item.gstPercentage,
-        lineTotal: item.lineTotal,
-      })),
-      subtotal: totals.subtotal,
-      gstAmount: totals.gstAmount,
-      totalAmount: totals.totalAmount,
-      profit: estimatedProfit,
-      paymentStatus: values.paymentStatus,
       saleDate: values.saleDate,
-      createdAt: sale?.createdAt ?? now,
-      updatedAt: now,
+      paidAmount,
+      paymentStatus: derivedPaymentStatus,
+      notes: values.notes.trim(),
+      items: calculatedItems,
     });
   }
 
@@ -627,6 +776,19 @@ function SaleModal({ mode, onClose, onSave, sale }) {
         </div>
 
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
+          <SelectControl
+            label="Customer"
+            name="customerId"
+            onChange={updateField}
+            value={values.customerId}
+          >
+            <option value="">Walk-in / New customer</option>
+            {customers.map((customer) => (
+              <option key={customer.id} value={customer.id}>
+                {customer.name}
+              </option>
+            ))}
+          </SelectControl>
           <Input
             error={errors.customerName}
             label="Customer name"
@@ -644,16 +806,6 @@ function SaleModal({ mode, onClose, onSave, sale }) {
             type="tel"
             value={values.customerPhone}
           />
-          <SelectControl
-            label="Payment status"
-            name="paymentStatus"
-            onChange={updateField}
-            value={values.paymentStatus}
-          >
-            {paymentStatuses.map((status) => (
-              <option key={status}>{status}</option>
-            ))}
-          </SelectControl>
           <Input
             label="Sale date"
             name="saleDate"
@@ -661,50 +813,61 @@ function SaleModal({ mode, onClose, onSave, sale }) {
             type="date"
             value={values.saleDate}
           />
-        </div>
-
-        <div className="mt-7">
-          <SaleLineItemsEditor
-            errors={errors}
-            items={items}
-            onAdd={addItem}
-            onRemove={removeItem}
-            onUpdate={updateItem}
+          <Input
+            error={errors.paidAmount}
+            label="Paid amount"
+            name="paidAmount"
+            onChange={updateField}
+            placeholder="0"
+            type="number"
+            value={values.paidAmount}
+          />
+          <Input
+            label="Notes"
+            name="notes"
+            onChange={updateField}
+            placeholder="Payment terms or invoice note"
+            value={values.notes}
           />
         </div>
 
-        <div className="mt-6 grid gap-3 rounded-3xl bg-slate-50 p-4 sm:grid-cols-4">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
-              Subtotal
-            </p>
-            <p className="mt-1 font-black text-slate-950">
-              {formatCurrency(totals.subtotal)}
-            </p>
+        <div className="mt-7">
+          {mode === 'edit' ? (
+            <ReadOnlyItems items={sale.items} />
+          ) : (
+            <SaleLineItemsEditor
+              errors={errors}
+              items={items}
+              onAdd={addItem}
+              onRemove={removeItem}
+              onUpdate={updateItem}
+              products={products}
+            />
+          )}
+        </div>
+
+        <div className="mt-6 grid gap-3 rounded-3xl bg-slate-50 p-4 sm:grid-cols-5">
+          {[
+            ['Subtotal', formatCurrency(subtotal)],
+            ['GST', formatCurrency(gstAmount)],
+            ['Total', formatCurrency(totalAmount)],
+            ['Paid', formatCurrency(paidAmount)],
+            ['Due', formatCurrency(dueAmount)],
+          ].map(([label, value]) => (
+            <div key={label}>
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{label}</p>
+              <p className="mt-1 font-black text-slate-950">{value}</p>
+            </div>
+          ))}
+          <div className="sm:col-span-2">
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Est. Profit</p>
+            <p className="mt-1 font-black text-emerald-600">{formatCurrency(profit)}</p>
           </div>
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
-              GST
-            </p>
-            <p className="mt-1 font-black text-slate-950">
-              {formatCurrency(totals.gstAmount)}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
-              Total
-            </p>
-            <p className="mt-1 font-black text-slate-950">
-              {formatCurrency(totals.totalAmount)}
-            </p>
-          </div>
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
-              Est. Profit
-            </p>
-            <p className="mt-1 font-black text-emerald-600">
-              {formatCurrency(estimatedProfit)}
-            </p>
+          <div className="sm:col-span-3">
+            <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Payment Status</p>
+            <Badge className="mt-1" variant={getSalePaymentStatusBadge(derivedPaymentStatus)}>
+              {derivedPaymentStatus}
+            </Badge>
           </div>
         </div>
 
@@ -712,7 +875,7 @@ function SaleModal({ mode, onClose, onSave, sale }) {
           <Button onClick={onClose} rounded="2xl" type="button" variant="secondary">
             Cancel
           </Button>
-          <Button rounded="2xl" type="submit">
+          <Button loading={saving} rounded="2xl" type="submit">
             {mode === 'edit' ? 'Save Changes' : 'Save Sale'}
           </Button>
         </div>
@@ -722,6 +885,13 @@ function SaleModal({ mode, onClose, onSave, sale }) {
 }
 
 function SaleDetailsModal({ onClose, sale }) {
+  const aiAction =
+    sale.paymentStatus === 'Paid'
+      ? 'This sale is fully paid. Review fast-moving products for restocking.'
+      : sale.paymentStatus === 'Partial'
+        ? `Collect remaining ${formatCurrency(sale.dueAmount)} to close this sale.`
+        : `Follow up to collect ${formatCurrency(sale.dueAmount)} for this invoice.`;
+
   return (
     <ModalShell onClose={onClose} size="max-w-2xl">
       <div className="p-5 sm:p-6">
@@ -731,7 +901,7 @@ function SaleDetailsModal({ onClose, sale }) {
               {sale.invoiceNumber}
             </h2>
             <p className="mt-1 text-sm font-semibold text-slate-500">
-              {sale.customerName} · {sale.customerPhone}
+              {sale.customerName} {sale.customerPhone ? `- ${sale.customerPhone}` : ''}
             </p>
             <Badge className="mt-3" variant={getSalePaymentStatusBadge(sale.paymentStatus)}>
               {sale.paymentStatus}
@@ -750,17 +920,22 @@ function SaleDetailsModal({ onClose, sale }) {
         <div className="mt-6 overflow-hidden rounded-3xl border border-slate-100">
           {sale.items.map((item) => (
             <div
-              className="grid gap-2 border-b border-slate-100 bg-white p-4 last:border-b-0 sm:grid-cols-[1fr_0.4fr_0.6fr_0.4fr_0.7fr]"
-              key={`${item.productName}-${item.quantity}`}
+              className="grid gap-2 border-b border-slate-100 bg-white p-4 last:border-b-0 sm:grid-cols-[1fr_0.4fr_0.55fr_0.45fr_0.6fr_0.6fr]"
+              key={item.id || `${item.productName}-${item.quantity}`}
             >
               <p className="font-black text-slate-950">{item.productName}</p>
-              <p className="text-sm text-slate-500">Qty {item.quantity}</p>
+              <p className="text-sm text-slate-500">
+                Qty {item.quantity} {item.unit || ''}
+              </p>
               <p className="text-sm font-bold text-slate-950">
                 {formatCurrency(item.sellingPrice)}
               </p>
               <p className="text-sm text-slate-500">{item.gstPercentage}% GST</p>
               <p className="text-sm font-black text-slate-950">
                 {formatCurrency(item.lineTotal)}
+              </p>
+              <p className="text-sm font-black text-emerald-600">
+                {formatCurrency(item.profit)}
               </p>
             </div>
           ))}
@@ -772,12 +947,13 @@ function SaleDetailsModal({ onClose, sale }) {
             ['Subtotal', formatCurrency(sale.subtotal)],
             ['GST amount', formatCurrency(sale.gstAmount)],
             ['Total', formatCurrency(sale.totalAmount)],
+            ['Paid', formatCurrency(sale.paidAmount)],
+            ['Due', formatCurrency(sale.dueAmount)],
             ['Profit', formatCurrency(sale.profit)],
+            ['Notes', sale.notes || 'No notes'],
           ].map(([label, value]) => (
             <div className="rounded-2xl bg-slate-50 p-4" key={label}>
-              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
-                {label}
-              </p>
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{label}</p>
               <p className="mt-1 font-black text-slate-950">{value}</p>
             </div>
           ))}
@@ -786,10 +962,7 @@ function SaleDetailsModal({ onClose, sale }) {
         <div className="mt-5 rounded-3xl border border-indigo-100 bg-indigo-50 p-4">
           <div className="flex gap-3">
             <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-indigo-600" />
-            <p className="text-sm leading-6 text-slate-700">
-              This sale includes fast-moving products. Keep Rice and Cooking Oil
-              stocked before the weekend.
-            </p>
+            <p className="text-sm leading-6 text-slate-700">{aiAction}</p>
           </div>
         </div>
       </div>
@@ -797,7 +970,7 @@ function SaleDetailsModal({ onClose, sale }) {
   );
 }
 
-function MarkPaidModal({ onCancel, onConfirm, sale }) {
+function MarkPaidModal({ loading, onCancel, onConfirm, sale }) {
   return (
     <ModalShell onClose={onCancel} size="max-w-md">
       <div className="p-5 sm:p-6">
@@ -808,14 +981,14 @@ function MarkPaidModal({ onCancel, onConfirm, sale }) {
           Mark this sale as paid?
         </h2>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          {sale.invoiceNumber} for {formatCurrency(sale.totalAmount)} will be
-          marked paid in local state only.
+          {sale.invoiceNumber} for {formatCurrency(sale.totalAmount)} will be marked paid in
+          Appwrite and customer dues will be updated.
         </p>
         <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
           <Button onClick={onCancel} rounded="2xl" variant="secondary">
             Cancel
           </Button>
-          <Button onClick={onConfirm} rounded="2xl">
+          <Button loading={loading} onClick={onConfirm} rounded="2xl">
             Mark Paid
           </Button>
         </div>
@@ -824,7 +997,9 @@ function MarkPaidModal({ onCancel, onConfirm, sale }) {
   );
 }
 
-function DeleteConfirmModal({ onCancel, onConfirm, sale }) {
+function DeleteConfirmModal({ loading, onCancel, onConfirm, sale }) {
+  const [restoreStock, setRestoreStock] = useState(true);
+
   return (
     <ModalShell onClose={onCancel} size="max-w-md">
       <div className="p-5 sm:p-6">
@@ -832,17 +1007,31 @@ function DeleteConfirmModal({ onCancel, onConfirm, sale }) {
           <Trash2 className="h-6 w-6" />
         </div>
         <h2 className="mt-5 text-2xl font-black tracking-tight text-slate-950">
-          Delete this sale record?
+          Delete this sale?
         </h2>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          {sale.invoiceNumber} will be removed from this local sales list. No
-          backend data is touched.
+          This removes {sale.invoiceNumber}. Deducted product stock can be restored before the
+          sale is deleted.
         </p>
+        <label className="mt-5 flex items-center gap-3 rounded-2xl bg-slate-50 p-3 text-sm font-semibold text-slate-700">
+          <input
+            checked={restoreStock}
+            className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+            onChange={(event) => setRestoreStock(event.target.checked)}
+            type="checkbox"
+          />
+          Restore deducted stock before deleting
+        </label>
         <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
           <Button onClick={onCancel} rounded="2xl" variant="secondary">
             Cancel
           </Button>
-          <Button onClick={onConfirm} rounded="2xl" variant="danger">
+          <Button
+            loading={loading}
+            onClick={() => onConfirm({ restoreStock })}
+            rounded="2xl"
+            variant="danger"
+          >
             Delete Sale
           </Button>
         </div>
@@ -851,49 +1040,112 @@ function DeleteConfirmModal({ onCancel, onConfirm, sale }) {
   );
 }
 
-function EmptyState({ onClear }) {
+function EmptyState({ isInitialEmpty, onClear, onCreate, onSeed, seeding }) {
   return (
     <Card className="text-center" padding="lg">
       <div className="mx-auto grid h-14 w-14 place-items-center rounded-3xl bg-slate-100 text-slate-500">
-        <SearchX className="h-7 w-7" />
+        {isInitialEmpty ? <PackageOpen className="h-7 w-7" /> : <SearchX className="h-7 w-7" />}
       </div>
-      <h2 className="mt-5 text-2xl font-black text-slate-950">No sales found</h2>
-      <p className="mt-2 text-sm text-slate-500">
-        Try changing your search or filters.
+      <h2 className="mt-5 text-2xl font-black text-slate-950">
+        {isInitialEmpty ? 'No sales yet' : 'No sales found'}
+      </h2>
+      <p className="mx-auto mt-2 max-w-md text-sm text-slate-500">
+        {isInitialEmpty
+          ? 'Create your first sale to track revenue, GST, profit, and inventory deduction.'
+          : 'Try changing your search or filters.'}
       </p>
-      <Button className="mt-6" onClick={onClear} variant="secondary">
-        Clear filters
-      </Button>
+      <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
+        {isInitialEmpty ? (
+          <>
+            <Button onClick={onCreate}>
+              <Plus className="h-4 w-4" />
+              Create Sale
+            </Button>
+            <Button loading={seeding} onClick={onSeed} variant="secondary">
+              Load Demo Sales
+            </Button>
+          </>
+        ) : (
+          <Button onClick={onClear} variant="secondary">
+            Clear filters
+          </Button>
+        )}
+      </div>
     </Card>
   );
 }
 
-function isWithinDateFilter(saleDate, filter, referenceDate) {
-  if (filter === 'All Time') {
-    return true;
-  }
+function LoadingState() {
+  return (
+    <Card className="grid min-h-[280px] place-items-center text-center" padding="lg">
+      <div>
+        <div className="mx-auto grid h-14 w-14 place-items-center rounded-3xl bg-indigo-50 text-indigo-600">
+          <Loader2 className="h-7 w-7 animate-spin" />
+        </div>
+        <h2 className="mt-5 text-xl font-black text-slate-950">Loading sales workspace</h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Fetching sales, customers, products, and line items from Appwrite.
+        </p>
+      </div>
+    </Card>
+  );
+}
 
-  const saleTime = new Date(`${saleDate}T00:00:00`).getTime();
-  const referenceTime = new Date(`${referenceDate}T00:00:00`).getTime();
+function isWithinDateFilter(saleDate, filter) {
+  if (filter === 'All Time') return true;
+
+  const parsedSale = new Date(saleDate);
+  const now = new Date();
+
+  if (Number.isNaN(parsedSale.getTime())) return false;
 
   if (filter === 'Today') {
-    return saleDate === referenceDate;
+    return parsedSale.toISOString().slice(0, 10) === now.toISOString().slice(0, 10);
   }
 
   if (filter === 'This Week') {
     const sevenDays = 6 * 24 * 60 * 60 * 1000;
-    return saleTime >= referenceTime - sevenDays && saleTime <= referenceTime;
+    return parsedSale.getTime() >= now.getTime() - sevenDays && parsedSale <= now;
   }
 
   if (filter === 'This Month') {
-    return saleDate.slice(0, 7) === referenceDate.slice(0, 7);
+    return parsedSale.toISOString().slice(0, 7) === now.toISOString().slice(0, 7);
   }
 
   return true;
 }
 
+function getAiInsight(stats, products) {
+  const lowStockProducts = products.filter((product) => {
+    const stock = Number(product.currentStock ?? product.stock ?? 0);
+    const minStock = Number(product.minimumStock ?? product.minStock ?? 0);
+    return stock > 0 && stock <= minStock;
+  });
+
+  if (stats.pendingSales > 0) {
+    return `You have ${formatCurrency(stats.pendingSales)} pending from sales. Mark paid after collection to improve cash flow.`;
+  }
+
+  if (lowStockProducts.length) {
+    return 'Recent sales reduced stock for fast-moving products. Review inventory before weekend.';
+  }
+
+  if (stats.monthlyRevenue <= 0) {
+    return 'Create more sales to unlock trend insights and profit recommendations.';
+  }
+
+  return 'Sales are moving cleanly. Keep recording paid amounts so revenue, dues, and profit stay accurate.';
+}
+
 export default function SalesPage() {
-  const [sales, setSales] = useState(mockSales);
+  const { user } = useAuth();
+  const [sales, setSales] = useState([]);
+  const [customers, setCustomers] = useState([]);
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState('');
+  const [seeding, setSeeding] = useState(false);
+  const [feedback, setFeedback] = useState({ message: '', tone: 'info' });
   const [filters, setFilters] = useState({
     search: '',
     paymentStatus: 'All Sales',
@@ -902,47 +1154,67 @@ export default function SalesPage() {
   });
   const [modalState, setModalState] = useState({ type: null, sale: null });
 
-  const referenceDate = useMemo(
-    () => [...sales].sort((a, b) => b.saleDate.localeCompare(a.saleDate))[0]?.saleDate || '2026-07-05',
-    [sales],
+  const loadData = useCallback(async () => {
+    if (!user?.$id) return;
+
+    setLoading(true);
+    try {
+      const [nextSales, nextCustomers, nextProducts] = await Promise.all([
+        listSales(user.$id),
+        listCustomers(user.$id),
+        listProducts(user.$id),
+      ]);
+
+      setSales(nextSales);
+      setCustomers(nextCustomers);
+      setProducts(nextProducts);
+    } catch (error) {
+      setFeedback({
+        message: error.message || 'Could not load sales.',
+        tone: 'danger',
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.$id]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  const stats = useMemo(() => getSalesStats(sales), [sales]);
+  const aiInsight = useMemo(() => getAiInsight(stats, products), [products, stats]);
+  const hasActiveFilters = Boolean(
+    filters.search ||
+      filters.paymentStatus !== 'All Sales' ||
+      filters.dateFilter !== 'All Time' ||
+      filters.sortBy !== 'Latest',
   );
 
   const filteredSales = useMemo(() => {
     const searchTerm = filters.search.trim().toLowerCase();
     const nextSales = sales.filter((sale) => {
+      const itemNames = sale.items.map((item) => item.productName).join(' ').toLowerCase();
       const matchesSearch =
         !searchTerm ||
         sale.invoiceNumber.toLowerCase().includes(searchTerm) ||
         sale.customerName.toLowerCase().includes(searchTerm) ||
-        sale.items.some((item) => item.productName.toLowerCase().includes(searchTerm));
+        String(sale.customerPhone || '').toLowerCase().includes(searchTerm) ||
+        itemNames.includes(searchTerm);
       const matchesPayment =
-        filters.paymentStatus === 'All Sales' ||
-        sale.paymentStatus === filters.paymentStatus;
-      const matchesDate = isWithinDateFilter(
-        sale.saleDate,
-        filters.dateFilter,
-        referenceDate,
-      );
+        filters.paymentStatus === 'All Sales' || sale.paymentStatus === filters.paymentStatus;
+      const matchesDate = isWithinDateFilter(sale.saleDate, filters.dateFilter);
 
       return matchesSearch && matchesPayment && matchesDate;
     });
 
     return [...nextSales].sort((a, b) => {
-      if (filters.sortBy === 'Highest Amount') {
-        return b.totalAmount - a.totalAmount;
-      }
-
-      if (filters.sortBy === 'Highest Profit') {
-        return b.profit - a.profit;
-      }
-
-      if (filters.sortBy === 'Customer Name') {
-        return a.customerName.localeCompare(b.customerName);
-      }
-
-      return new Date(b.createdAt) - new Date(a.createdAt);
+      if (filters.sortBy === 'Highest Amount') return b.totalAmount - a.totalAmount;
+      if (filters.sortBy === 'Highest Profit') return b.profit - a.profit;
+      if (filters.sortBy === 'Customer Name') return a.customerName.localeCompare(b.customerName);
+      return new Date(b.createdAt || b.saleDate) - new Date(a.createdAt || a.saleDate);
     });
-  }, [filters, referenceDate, sales]);
+  }, [filters, sales]);
 
   function updateFilter(event) {
     const { name, value } = event.target;
@@ -958,47 +1230,141 @@ export default function SalesPage() {
     });
   }
 
-  function generateInvoiceNumber() {
-    const maxInvoice = sales.reduce((max, sale) => {
-      const number = Number(sale.invoiceNumber.replace('INV-', ''));
-      return Math.max(max, number);
-    }, 1000);
+  async function saveSale(saleData) {
+    if (!user?.$id) return;
 
-    return `INV-${maxInvoice + 1}`;
-  }
-
-  function saveSale(sale) {
-    setSales((current) => {
-      const exists = current.some((item) => item.id === sale.id);
-      const nextSale = {
-        ...sale,
-        invoiceNumber: sale.invoiceNumber || generateInvoiceNumber(),
-      };
-
-      if (exists) {
-        return current.map((item) => (item.id === sale.id ? nextSale : item));
+    const isEdit = modalState.type === 'edit';
+    setActionLoading(isEdit ? 'edit' : 'add');
+    try {
+      if (isEdit) {
+        await updateSale(user.$id, modalState.sale.id, saleData);
+        setFeedback({ message: 'Sale updated successfully.', tone: 'success' });
+      } else {
+        await createSale(user.$id, saleData);
+        setFeedback({
+          message: 'Sale created and inventory updated successfully.',
+          tone: 'success',
+        });
       }
 
-      return [nextSale, ...current];
-    });
-    setModalState({ type: null, sale: null });
+      setModalState({ type: null, sale: null });
+      await loadData();
+    } catch (error) {
+      setFeedback({
+        message: error.message || (isEdit ? 'Could not update sale.' : 'Could not create sale.'),
+        tone: 'danger',
+      });
+    } finally {
+      setActionLoading('');
+    }
   }
 
-  function markSalePaid() {
-    const now = new Date().toISOString();
-    setSales((current) =>
-      current.map((sale) =>
-        sale.id === modalState.sale.id
-          ? { ...sale, paymentStatus: 'Paid', updatedAt: now }
-          : sale,
-      ),
-    );
-    setModalState({ type: null, sale: null });
+  async function markSalePaid() {
+    if (!user?.$id || !modalState.sale) return;
+
+    setActionLoading('paid');
+    try {
+      await markSalePaidService(user.$id, modalState.sale.id);
+      setFeedback({ message: 'Sale marked as paid.', tone: 'success' });
+      setModalState({ type: null, sale: null });
+      await loadData();
+    } catch (error) {
+      setFeedback({ message: error.message || 'Could not mark sale as paid.', tone: 'danger' });
+    } finally {
+      setActionLoading('');
+    }
   }
 
-  function confirmDelete() {
-    setSales((current) => current.filter((sale) => sale.id !== modalState.sale.id));
-    setModalState({ type: null, sale: null });
+  async function confirmDelete(options) {
+    if (!user?.$id || !modalState.sale) return;
+
+    setActionLoading('delete');
+    try {
+      await deleteSale(user.$id, modalState.sale.id, options);
+      setFeedback({ message: 'Sale deleted successfully.', tone: 'success' });
+      setModalState({ type: null, sale: null });
+      await loadData();
+    } catch (error) {
+      setFeedback({ message: error.message || 'Could not delete sale.', tone: 'danger' });
+    } finally {
+      setActionLoading('');
+    }
+  }
+
+  async function seedDemoSales() {
+    if (!user?.$id) return;
+
+    if (!customers.length || !products.length) {
+      setFeedback({
+        message: 'Add demo products and customers first to seed realistic sales.',
+        tone: 'warning',
+      });
+      return;
+    }
+
+    if (sales.length && !window.confirm('You already have sales. Add demo sales anyway?')) {
+      return;
+    }
+
+    setSeeding(true);
+    try {
+      let createdCount = 0;
+      const seeds = mockSales.slice(0, 5);
+
+      for (const demoSale of seeds) {
+        const customer = customers.find((entry) => entry.name === demoSale.customerName);
+        if (!customer) continue;
+
+        const saleItems = demoSale.items
+          .map((item) => {
+            const product = products.find((entry) => entry.productName === item.productName);
+            const availableStock = Number(product?.currentStock ?? product?.stock ?? 0);
+
+            if (!product || availableStock <= 0) return null;
+
+            return {
+              productId: product.id,
+              productName: product.productName,
+              quantity: Math.min(1, availableStock),
+              unit: product.unit || '',
+              sellingPrice: product.sellingPrice,
+              purchasePrice: product.purchasePrice,
+              gstPercentage: product.gstPercentage,
+            };
+          })
+          .filter(Boolean);
+
+        if (!saleItems.length) continue;
+
+        const normalizedItems = saleItems.map(normalizeSaleItem);
+        const totalAmount = calculateSaleTotalAmount(normalizedItems);
+        const paidAmount = demoSale.paymentStatus === 'Paid' ? totalAmount : 0;
+
+        await createSale(user.$id, {
+          customerId: customer.id,
+          customerName: customer.name,
+          customerPhone: customer.phone,
+          saleDate: todayInputDate(),
+          paidAmount,
+          paymentStatus: demoSale.paymentStatus,
+          notes: 'Seeded demo sale',
+          items: saleItems,
+        });
+        createdCount += 1;
+      }
+
+      await loadData();
+      setFeedback({
+        message: createdCount
+          ? `${createdCount} demo sales added successfully.`
+          : 'No demo sales were added because matching products had no stock.',
+        tone: createdCount ? 'success' : 'warning',
+      });
+    } catch (error) {
+      setFeedback({ message: error.message || 'Could not load demo sales.', tone: 'danger' });
+    } finally {
+      setSeeding(false);
+    }
   }
 
   return (
@@ -1006,6 +1372,10 @@ export default function SalesPage() {
       <SectionHeader
         action={
           <div className="flex flex-col gap-3 sm:flex-row">
+            <Button onClick={loadData} variant="secondary">
+              <RefreshCw className="h-4 w-4" />
+              Refresh
+            </Button>
             <Button variant="secondary">
               <Send className="h-4 w-4" />
               Export
@@ -1020,34 +1390,40 @@ export default function SalesPage() {
         title="Sales"
       />
 
+      <FeedbackBanner
+        message={feedback.message}
+        onDismiss={() => setFeedback({ message: '', tone: 'info' })}
+        tone={feedback.tone}
+      />
+
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           icon={TrendingUp}
           status="success"
           title="Today's Sales"
-          trend="+14% this week"
-          value="₹12,400"
+          trend="Real Appwrite sales"
+          value={formatCurrency(stats.todaySales)}
         />
         <StatCard
           icon={LineChart}
           status="info"
           title="Monthly Revenue"
-          trend="Growing month over month"
-          value="₹3,48,000"
+          trend="Excludes cancelled sales"
+          value={formatCurrency(stats.monthlyRevenue)}
         />
         <StatCard
           icon={WalletCards}
           status="warning"
           title="Pending Sales"
           trend="Needs payment follow-up"
-          value="₹58,000"
+          value={formatCurrency(stats.pendingSales)}
         />
         <StatCard
           icon={IndianRupee}
           status="success"
           title="Profit This Month"
-          trend="Healthy margin"
-          value="₹82,500"
+          trend="Calculated from line items"
+          value={formatCurrency(stats.profitThisMonth)}
         />
       </section>
 
@@ -1061,8 +1437,7 @@ export default function SalesPage() {
               AI Insight
             </Badge>
             <p className="mt-3 max-w-3xl text-lg font-bold leading-7 text-white">
-              Sales are 14% higher this week. Sugar and Cooking Oil are moving
-              faster before weekends. Keep extra stock ready.
+              {aiInsight}
             </p>
           </div>
           <Button variant="secondary">
@@ -1081,17 +1456,19 @@ export default function SalesPage() {
           <div>
             <h2 className="text-xl font-black text-slate-950">Sales History</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Showing {filteredSales.length} of {sales.length} local demo sales.
+              Showing {filteredSales.length} of {sales.length} Appwrite sales records.
             </p>
           </div>
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-500">
             <BarChart3 className="h-4 w-4 text-indigo-500" />
-            Local billing data only
+            Inventory and customer dues update on sale posting
           </div>
         </div>
       </Card>
 
-      {filteredSales.length ? (
+      {loading ? (
+        <LoadingState />
+      ) : filteredSales.length ? (
         <>
           <SalesTable
             onDelete={(sale) => setModalState({ type: 'delete', sale })}
@@ -1104,33 +1481,34 @@ export default function SalesPage() {
             {filteredSales.map((sale) => (
               <SaleCard
                 key={sale.id}
-                onDelete={(selectedSale) =>
-                  setModalState({ type: 'delete', sale: selectedSale })
-                }
-                onEdit={(selectedSale) =>
-                  setModalState({ type: 'edit', sale: selectedSale })
-                }
-                onMarkPaid={(selectedSale) =>
-                  setModalState({ type: 'paid', sale: selectedSale })
-                }
-                onView={(selectedSale) =>
-                  setModalState({ type: 'view', sale: selectedSale })
-                }
+                onDelete={(selectedSale) => setModalState({ type: 'delete', sale: selectedSale })}
+                onEdit={(selectedSale) => setModalState({ type: 'edit', sale: selectedSale })}
+                onMarkPaid={(selectedSale) => setModalState({ type: 'paid', sale: selectedSale })}
+                onView={(selectedSale) => setModalState({ type: 'view', sale: selectedSale })}
                 sale={sale}
               />
             ))}
           </div>
         </>
       ) : (
-        <EmptyState onClear={clearFilters} />
+        <EmptyState
+          isInitialEmpty={!sales.length && !hasActiveFilters}
+          onClear={clearFilters}
+          onCreate={() => setModalState({ type: 'add', sale: null })}
+          onSeed={seedDemoSales}
+          seeding={seeding}
+        />
       )}
 
       {modalState.type === 'add' || modalState.type === 'edit' ? (
         <SaleModal
+          customers={customers}
           mode={modalState.type}
           onClose={() => setModalState({ type: null, sale: null })}
           onSave={saveSale}
+          products={products}
           sale={modalState.sale}
+          saving={actionLoading === 'add' || actionLoading === 'edit'}
         />
       ) : null}
 
@@ -1143,6 +1521,7 @@ export default function SalesPage() {
 
       {modalState.type === 'paid' && modalState.sale ? (
         <MarkPaidModal
+          loading={actionLoading === 'paid'}
           onCancel={() => setModalState({ type: null, sale: null })}
           onConfirm={markSalePaid}
           sale={modalState.sale}
@@ -1151,6 +1530,7 @@ export default function SalesPage() {
 
       {modalState.type === 'delete' && modalState.sale ? (
         <DeleteConfirmModal
+          loading={actionLoading === 'delete'}
           onCancel={() => setModalState({ type: null, sale: null })}
           onConfirm={confirmDelete}
           sale={modalState.sale}

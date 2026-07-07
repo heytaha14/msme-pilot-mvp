@@ -41,6 +41,27 @@ export async function createInventoryMovement(userId, movementData) {
   }
 }
 
+export async function createSaleInventoryMovement(
+  userId,
+  product,
+  saleId,
+  quantity,
+  previousStock,
+  newStock,
+) {
+  return createInventoryMovement(userId, {
+    productId: product.$id || product.id,
+    productName: product.name || product.productName,
+    movementType: 'sale',
+    quantity: -Math.abs(Number(quantity || 0)),
+    previousStock,
+    newStock,
+    referenceType: 'sale',
+    referenceId: saleId,
+    note: 'Stock deducted from sale',
+  });
+}
+
 export async function listInventoryMovements(userId, options = {}) {
   try {
     const response = await databases.listDocuments(

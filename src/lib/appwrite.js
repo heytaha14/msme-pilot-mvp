@@ -2,6 +2,8 @@ import {
   Account,
   Client,
   Databases,
+  ExecutionMethod,
+  Functions,
   ID,
   Permission,
   Query,
@@ -36,6 +38,7 @@ if (appwriteConfig.projectId) {
 
 export const account = new Account(client);
 export const databases = new Databases(client);
+export const functions = new Functions(client);
 export const storage = new Storage(client);
 
-export { ID, Permission, Query, Role };
+export { ExecutionMethod, ID, Permission, Query, Role };

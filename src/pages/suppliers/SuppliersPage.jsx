@@ -7,7 +7,9 @@ import {
   FileText,
   Handshake,
   IndianRupee,
+  Loader2,
   Pencil,
+  RefreshCw,
   Search,
   SearchX,
   Send,
@@ -19,7 +21,7 @@ import {
   WandSparkles,
   X,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import Badge from '../../components/common/Badge.jsx';
 import Button from '../../components/common/Button.jsx';
@@ -27,11 +29,20 @@ import Card from '../../components/common/Card.jsx';
 import Input from '../../components/common/Input.jsx';
 import SectionHeader from '../../components/common/SectionHeader.jsx';
 import StatCard from '../../components/common/StatCard.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
 import {
   businessProfile,
   supplierCategories,
   suppliers as mockSuppliers,
 } from '../../data/mockData.js';
+import {
+  createSupplier,
+  deleteSupplier,
+  getSupplierStats,
+  listSuppliers,
+  markSupplierPaid,
+  updateSupplier,
+} from '../../services/supplierService.js';
 import {
   formatCurrency,
   formatDate,
@@ -440,7 +451,7 @@ function ModalShell({ children, onClose, size = 'max-w-2xl' }) {
   );
 }
 
-function SupplierModal({ mode, onClose, onSave, supplier }) {
+function SupplierModal({ formError, isSaving, mode, onClose, onSave, supplier }) {
   const [values, setValues] = useState(() => {
     if (!supplier) {
       return emptySupplierForm;
@@ -485,11 +496,15 @@ function SupplierModal({ mode, onClose, onSave, supplier }) {
       nextErrors.category = 'Category is required.';
     }
 
+    if (values.paymentDue !== '' && Number(values.paymentDue) < 0) {
+      nextErrors.paymentDue = 'Payment due must be 0 or more.';
+    }
+
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
 
     if (!validate()) {
@@ -503,8 +518,8 @@ function SupplierModal({ mode, onClose, onSave, supplier }) {
       .map((item) => item.trim())
       .filter(Boolean);
 
-    onSave({
-      id: supplier?.id ?? Date.now(),
+    await onSave({
+      id: supplier?.id,
       name: values.name.trim(),
       phone: values.phone.trim(),
       address: values.address.trim(),
@@ -542,6 +557,12 @@ function SupplierModal({ mode, onClose, onSave, supplier }) {
             <X className="h-5 w-5" />
           </button>
         </div>
+
+        {formError ? (
+          <div className="mt-5 rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+            {formError}
+          </div>
+        ) : null}
 
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
           <Input
@@ -597,6 +618,7 @@ function SupplierModal({ mode, onClose, onSave, supplier }) {
             ) : null}
           </div>
           <Input
+            error={errors.paymentDue}
             label="Opening payment due"
             name="paymentDue"
             onChange={updateField}
@@ -619,7 +641,7 @@ function SupplierModal({ mode, onClose, onSave, supplier }) {
           <Button onClick={onClose} rounded="2xl" type="button" variant="secondary">
             Cancel
           </Button>
-          <Button rounded="2xl" type="submit">
+          <Button loading={isSaving} rounded="2xl" type="submit">
             {mode === 'edit' ? 'Save Changes' : 'Save Supplier'}
           </Button>
         </div>
@@ -641,6 +663,8 @@ function SupplierDetailsModal({ onClose, supplier }) {
     ['Last payment date', formatDate(supplier.lastPaymentDate)],
     ['Payment status', status],
     ['Notes', supplier.notes],
+    ['Created date', formatDate(supplier.createdAt || supplier.$createdAt)],
+    ['Updated date', formatDate(supplier.updatedAt || supplier.$updatedAt)],
   ];
 
   return (
@@ -691,9 +715,9 @@ function SupplierDetailsModal({ onClose, supplier }) {
           <div className="flex gap-3">
             <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-indigo-600" />
             <p className="text-sm leading-6 text-slate-700">
-              {supplier.name} supplies fast-moving {supplier.category.toLowerCase()}{' '}
-              items. Clear {formatCurrency(supplier.paymentDue)} due this week to
-              avoid restock delays.
+              {supplier.paymentDue > 0
+                ? `Clear ${formatCurrency(supplier.paymentDue)} due to maintain smooth supplier relationship.`
+                : 'No current supplier dues. Keep monitoring next invoice cycle.'}
             </p>
           </div>
         </div>
@@ -702,7 +726,7 @@ function SupplierDetailsModal({ onClose, supplier }) {
   );
 }
 
-function PaymentModal({ onClose, onPaid, supplier }) {
+function PaymentModal({ isSaving, onClose, onPaid, supplier }) {
   const [method, setMethod] = useState('UPI');
 
   return (
@@ -715,7 +739,7 @@ function PaymentModal({ onClose, onPaid, supplier }) {
           Payment preview
         </h2>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          No real payment is made. This only updates local supplier state.
+          No real payment gateway is used. This updates your supplier document in Appwrite.
         </p>
 
         <div className="mt-5 rounded-3xl bg-slate-50 p-4">
@@ -765,7 +789,7 @@ function PaymentModal({ onClose, onPaid, supplier }) {
           <Button onClick={onClose} rounded="2xl" variant="secondary">
             Cancel
           </Button>
-          <Button onClick={onPaid} rounded="2xl">
+          <Button loading={isSaving} onClick={onPaid} rounded="2xl">
             Mark as Paid
           </Button>
         </div>
@@ -774,7 +798,7 @@ function PaymentModal({ onClose, onPaid, supplier }) {
   );
 }
 
-function DeleteConfirmModal({ onCancel, onConfirm, supplier }) {
+function DeleteConfirmModal({ isDeleting, onCancel, onConfirm, supplier }) {
   return (
     <ModalShell onClose={onCancel} size="max-w-md">
       <div className="p-5 sm:p-6">
@@ -785,14 +809,14 @@ function DeleteConfirmModal({ onCancel, onConfirm, supplier }) {
           Delete this supplier record?
         </h2>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          {supplier.name} will be removed from this local supplier list. No
-          backend data is touched.
+          {supplier.name} will be removed from your Appwrite supplier ledger.
+          This only affects your authenticated workspace.
         </p>
         <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
           <Button onClick={onCancel} rounded="2xl" variant="secondary">
             Cancel
           </Button>
-          <Button onClick={onConfirm} rounded="2xl" variant="danger">
+          <Button loading={isDeleting} onClick={onConfirm} rounded="2xl" variant="danger">
             Delete Supplier
           </Button>
         </div>
@@ -820,8 +844,57 @@ function EmptyState({ onClear }) {
   );
 }
 
+function FirstTimeEmptyState({ isSeeding, onAddSupplier, onSeedDemo }) {
+  return (
+    <Card className="text-center" padding="lg">
+      <div className="mx-auto grid h-16 w-16 place-items-center rounded-3xl bg-indigo-50 text-indigo-600">
+        <Truck className="h-8 w-8" />
+      </div>
+      <h2 className="mt-5 text-2xl font-black text-slate-950">
+        No suppliers yet
+      </h2>
+      <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
+        Add your first supplier to track purchases, dues, and restocking relationships.
+      </p>
+      <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
+        <Button onClick={onAddSupplier}>
+          <UserPlus className="h-4 w-4" />
+          Add Supplier
+        </Button>
+        <Button loading={isSeeding} onClick={onSeedDemo} variant="secondary">
+          Load Demo Suppliers
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+function SuppliersLoadingState() {
+  return (
+    <Card padding="lg">
+      <div className="flex flex-col items-center justify-center py-8 text-center">
+        <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
+        <h2 className="mt-4 text-xl font-black text-slate-950">
+          Loading suppliers
+        </h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Fetching supplier records from your Appwrite workspace...
+        </p>
+      </div>
+    </Card>
+  );
+}
+
 export default function SuppliersPage() {
-  const [suppliers, setSuppliers] = useState(mockSuppliers);
+  const { user } = useAuth();
+  const [suppliers, setSuppliers] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSeeding, setIsSeeding] = useState(false);
+  const [mutationLoading, setMutationLoading] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
+  const [formError, setFormError] = useState('');
   const [filters, setFilters] = useState({
     search: '',
     paymentStatus: 'All Suppliers',
@@ -830,6 +903,56 @@ export default function SuppliersPage() {
   });
   const [modalState, setModalState] = useState({ type: null, supplier: null });
 
+  const showSuccess = useCallback((message) => {
+    setSuccessMessage(message);
+    window.setTimeout(() => setSuccessMessage(''), 2800);
+  }, []);
+
+  const loadSuppliers = useCallback(
+    async ({ refreshing = false } = {}) => {
+      if (!user?.$id) return;
+
+      setErrorMessage('');
+      if (refreshing) {
+        setIsRefreshing(true);
+      } else {
+        setIsLoading(true);
+      }
+
+      try {
+        setSuppliers(await listSuppliers(user.$id));
+      } catch (error) {
+        setErrorMessage(error.message);
+      } finally {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
+    },
+    [user?.$id],
+  );
+
+  useEffect(() => {
+    loadSuppliers();
+  }, [loadSuppliers]);
+
+  const supplierStats = useMemo(() => getSupplierStats(suppliers), [suppliers]);
+
+  const supplierAiInsight = useMemo(() => {
+    const dueSuppliers = suppliers.filter((supplier) => Number(supplier.paymentDue || 0) > 0);
+
+    if (!suppliers.length) {
+      return 'Add suppliers and MSME Pilot will start tracking dues and restocking relationships.';
+    }
+
+    if (!dueSuppliers.length) {
+      return 'Supplier dues are clear. Your vendor payment status is healthy.';
+    }
+
+    const highestDue = [...dueSuppliers].sort((a, b) => b.paymentDue - a.paymentDue)[0];
+
+    return `${highestDue.name} has the highest supplier due. Plan payment to maintain smooth restocking.`;
+  }, [suppliers]);
+
   const filteredSuppliers = useMemo(() => {
     const searchTerm = filters.search.trim().toLowerCase();
     const nextSuppliers = suppliers.filter((supplier) => {
@@ -837,8 +960,9 @@ export default function SuppliersPage() {
       const matchesSearch =
         !searchTerm ||
         supplier.name.toLowerCase().includes(searchTerm) ||
-        supplier.phone.toLowerCase().includes(searchTerm) ||
-        supplier.productsSupplied.join(' ').toLowerCase().includes(searchTerm);
+        String(supplier.phone || '').toLowerCase().includes(searchTerm) ||
+        supplier.productsSupplied.join(' ').toLowerCase().includes(searchTerm) ||
+        String(supplier.category || '').toLowerCase().includes(searchTerm);
       const matchesStatus =
         filters.paymentStatus === 'All Suppliers' ||
         status === filters.paymentStatus;
@@ -861,7 +985,7 @@ export default function SuppliersPage() {
         return a.name.localeCompare(b.name);
       }
 
-      return new Date(b.createdAt) - new Date(a.createdAt);
+      return new Date(b.createdAt || b.$createdAt) - new Date(a.createdAt || a.$createdAt);
     });
   }, [filters, suppliers]);
 
@@ -879,42 +1003,131 @@ export default function SuppliersPage() {
     });
   }
 
-  function saveSupplier(supplier) {
-    setSuppliers((current) => {
-      const exists = current.some((item) => item.id === supplier.id);
+  function openSupplierModal(type, supplier = null) {
+    setFormError('');
+    setModalState({ type, supplier });
+  }
 
-      if (exists) {
-        return current.map((item) => (item.id === supplier.id ? supplier : item));
+  async function saveSupplier(supplier) {
+    if (!user?.$id) {
+      setFormError('You must be logged in to manage suppliers.');
+      return;
+    }
+
+    setMutationLoading(true);
+    setFormError('');
+    setErrorMessage('');
+
+    try {
+      if (modalState.type === 'edit') {
+        const updatedSupplier = await updateSupplier(user.$id, modalState.supplier.id, supplier);
+        setSuppliers((current) =>
+          current.map((item) => (item.id === updatedSupplier.id ? updatedSupplier : item)),
+        );
+        showSuccess('Supplier updated successfully.');
+      } else {
+        const createdSupplier = await createSupplier(user.$id, supplier);
+        setSuppliers((current) => [createdSupplier, ...current]);
+        showSuccess('Supplier added successfully.');
       }
 
-      return [supplier, ...current];
-    });
-    setModalState({ type: null, supplier: null });
+      setModalState({ type: null, supplier: null });
+    } catch (error) {
+      setFormError(error.message);
+    } finally {
+      setMutationLoading(false);
+    }
   }
 
-  function markSupplierPaid() {
-    const now = new Date().toISOString();
-    setSuppliers((current) =>
-      current.map((supplier) =>
-        supplier.id === modalState.supplier.id
-          ? {
-              ...supplier,
-              paymentDue: 0,
-              paymentStatus: 'Paid',
-              lastPaymentDate: now.slice(0, 10),
-              updatedAt: now,
-            }
-          : supplier,
-      ),
-    );
-    setModalState({ type: null, supplier: null });
+  async function handleMarkSupplierPaid() {
+    if (!user?.$id || !modalState.supplier) return;
+
+    setMutationLoading(true);
+    setErrorMessage('');
+
+    try {
+      const updatedSupplier = await markSupplierPaid(user.$id, modalState.supplier.id);
+      setSuppliers((current) =>
+        current.map((supplier) =>
+          supplier.id === updatedSupplier.id ? updatedSupplier : supplier,
+        ),
+      );
+      setModalState({ type: null, supplier: null });
+      showSuccess('Supplier payment marked as paid.');
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setMutationLoading(false);
+    }
   }
 
-  function confirmDelete() {
-    setSuppliers((current) =>
-      current.filter((supplier) => supplier.id !== modalState.supplier.id),
+  async function confirmDelete() {
+    if (!user?.$id || !modalState.supplier) return;
+
+    setMutationLoading(true);
+    setErrorMessage('');
+
+    try {
+      await deleteSupplier(user.$id, modalState.supplier.id);
+      setSuppliers((current) =>
+        current.filter((supplier) => supplier.id !== modalState.supplier.id),
+      );
+      setModalState({ type: null, supplier: null });
+      showSuccess('Supplier deleted successfully.');
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setMutationLoading(false);
+    }
+  }
+
+  async function seedDemoSuppliers() {
+    if (!user?.$id) {
+      setErrorMessage('You must be logged in to seed demo suppliers.');
+      return;
+    }
+
+    if (
+      suppliers.length > 0 &&
+      !window.confirm('You already have suppliers. Add demo suppliers anyway?')
+    ) {
+      return;
+    }
+
+    const existingKeys = new Set(
+      suppliers.flatMap((supplier) => [
+        String(supplier.phone || '').toLowerCase(),
+        String(supplier.name || '').toLowerCase(),
+      ]),
     );
-    setModalState({ type: null, supplier: null });
+    const seedSuppliers = mockSuppliers.filter(
+      (supplier) =>
+        !existingKeys.has(String(supplier.phone || '').toLowerCase()) &&
+        !existingKeys.has(String(supplier.name || '').toLowerCase()),
+    );
+
+    if (!seedSuppliers.length) {
+      showSuccess('Demo suppliers already exist in this ledger.');
+      return;
+    }
+
+    setIsSeeding(true);
+    setErrorMessage('');
+
+    try {
+      const createdSuppliers = [];
+
+      for (const supplier of seedSuppliers) {
+        createdSuppliers.push(await createSupplier(user.$id, supplier));
+      }
+
+      setSuppliers((current) => [...createdSuppliers, ...current]);
+      showSuccess(`${createdSuppliers.length} demo suppliers added successfully.`);
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setIsSeeding(false);
+    }
   }
 
   return (
@@ -922,11 +1135,19 @@ export default function SuppliersPage() {
       <SectionHeader
         action={
           <div className="flex flex-col gap-3 sm:flex-row">
+            <Button
+              loading={isRefreshing}
+              onClick={() => loadSuppliers({ refreshing: true })}
+              variant="secondary"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Refresh
+            </Button>
             <Button variant="secondary">
               <Send className="h-4 w-4" />
               Export
             </Button>
-            <Button onClick={() => setModalState({ type: 'add', supplier: null })}>
+            <Button onClick={() => openSupplierModal('add')}>
               <UserPlus className="h-4 w-4" />
               Add Supplier
             </Button>
@@ -936,34 +1157,60 @@ export default function SuppliersPage() {
         title="Suppliers"
       />
 
+      <AnimatePresence>
+        {successMessage ? (
+          <motion.div
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            initial={{ opacity: 0, y: -8 }}
+          >
+            <Card className="border-emerald-100 bg-emerald-50/90" padding="sm">
+              <div className="flex items-center gap-3 text-sm font-bold text-emerald-700">
+                <BadgeCheck className="h-4 w-4" />
+                {successMessage}
+              </div>
+            </Card>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      {errorMessage ? (
+        <Card className="border-rose-100 bg-rose-50/90" padding="sm">
+          <div className="flex items-start gap-3 text-sm font-semibold text-rose-700">
+            <WalletCards className="mt-0.5 h-4 w-4 shrink-0" />
+            <p>{errorMessage}</p>
+          </div>
+        </Card>
+      ) : null}
+
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           icon={Building2}
           status="info"
           title="Total Suppliers"
           trend="Across vendor network"
-          value="38"
+          value={supplierStats.totalSuppliers}
         />
         <StatCard
           icon={WalletCards}
           status="warning"
           title="Payment Due"
           trend="Due this week"
-          value="₹31,000"
+          value={formatCurrency(supplierStats.totalPaymentDue)}
         />
         <StatCard
           icon={Handshake}
           status="success"
           title="Active Suppliers"
           trend="Recent invoice activity"
-          value="26"
+          value={supplierStats.activeSuppliers}
         />
         <StatCard
           icon={FileText}
           status="neutral"
           title="Invoices This Month"
           trend="Supplier invoices"
-          value="42"
+          value={supplierStats.invoicesThisMonth}
         />
       </section>
 
@@ -977,8 +1224,7 @@ export default function SuppliersPage() {
               AI Insight
             </Badge>
             <p className="mt-3 max-w-3xl text-lg font-bold leading-7 text-white">
-              ABC Traders supplies your fast-moving grocery items. Clear ₹18,000
-              due this week to maintain smooth restocking.
+              {supplierAiInsight}
             </p>
           </div>
           <Button variant="secondary">
@@ -1001,23 +1247,31 @@ export default function SuppliersPage() {
           <div>
             <h2 className="text-xl font-black text-slate-950">Supplier Ledger</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Showing {filteredSuppliers.length} of {suppliers.length} local demo suppliers.
+              Showing {filteredSuppliers.length} of {suppliers.length} Appwrite suppliers.
             </p>
           </div>
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-500">
             <BadgeCheck className="h-4 w-4 text-indigo-500" />
-            Local vendor data only
+            Per-user Appwrite data
           </div>
         </div>
       </Card>
 
-      {filteredSuppliers.length ? (
+      {isLoading ? (
+        <SuppliersLoadingState />
+      ) : !suppliers.length ? (
+        <FirstTimeEmptyState
+          isSeeding={isSeeding}
+          onAddSupplier={() => openSupplierModal('add')}
+          onSeedDemo={seedDemoSuppliers}
+        />
+      ) : filteredSuppliers.length ? (
         <>
           <SupplierTable
-            onDelete={(supplier) => setModalState({ type: 'delete', supplier })}
-            onEdit={(supplier) => setModalState({ type: 'edit', supplier })}
-            onPay={(supplier) => setModalState({ type: 'pay', supplier })}
-            onView={(supplier) => setModalState({ type: 'view', supplier })}
+            onDelete={(supplier) => openSupplierModal('delete', supplier)}
+            onEdit={(supplier) => openSupplierModal('edit', supplier)}
+            onPay={(supplier) => openSupplierModal('pay', supplier)}
+            onView={(supplier) => openSupplierModal('view', supplier)}
             suppliers={filteredSuppliers}
           />
           <div className="grid gap-4 xl:hidden">
@@ -1025,16 +1279,16 @@ export default function SuppliersPage() {
               <SupplierCard
                 key={supplier.id}
                 onDelete={(selectedSupplier) =>
-                  setModalState({ type: 'delete', supplier: selectedSupplier })
+                  openSupplierModal('delete', selectedSupplier)
                 }
                 onEdit={(selectedSupplier) =>
-                  setModalState({ type: 'edit', supplier: selectedSupplier })
+                  openSupplierModal('edit', selectedSupplier)
                 }
                 onPay={(selectedSupplier) =>
-                  setModalState({ type: 'pay', supplier: selectedSupplier })
+                  openSupplierModal('pay', selectedSupplier)
                 }
                 onView={(selectedSupplier) =>
-                  setModalState({ type: 'view', supplier: selectedSupplier })
+                  openSupplierModal('view', selectedSupplier)
                 }
                 supplier={supplier}
               />
@@ -1047,6 +1301,8 @@ export default function SuppliersPage() {
 
       {modalState.type === 'add' || modalState.type === 'edit' ? (
         <SupplierModal
+          formError={formError}
+          isSaving={mutationLoading}
           mode={modalState.type}
           onClose={() => setModalState({ type: null, supplier: null })}
           onSave={saveSupplier}
@@ -1063,14 +1319,16 @@ export default function SuppliersPage() {
 
       {modalState.type === 'pay' && modalState.supplier ? (
         <PaymentModal
+          isSaving={mutationLoading}
           onClose={() => setModalState({ type: null, supplier: null })}
-          onPaid={markSupplierPaid}
+          onPaid={handleMarkSupplierPaid}
           supplier={modalState.supplier}
         />
       ) : null}
 
       {modalState.type === 'delete' && modalState.supplier ? (
         <DeleteConfirmModal
+          isDeleting={mutationLoading}
           onCancel={() => setModalState({ type: null, supplier: null })}
           onConfirm={confirmDelete}
           supplier={modalState.supplier}

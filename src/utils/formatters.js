@@ -7,11 +7,21 @@ export function formatCurrency(value) {
 }
 
 export function formatDate(date) {
+  if (!date) {
+    return 'Not available';
+  }
+
+  const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) {
+    return 'Not available';
+  }
+
   return new Intl.DateTimeFormat('en-IN', {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
-  }).format(new Date(date));
+  }).format(parsedDate);
 }
 
 export function formatPercentage(value) {
@@ -116,6 +126,50 @@ export function getSupplierPaymentStatus(supplier) {
   return 'Due';
 }
 
+export function calculateCustomerStats(customers) {
+  const now = new Date();
+  const month = now.getMonth();
+  const year = now.getFullYear();
+
+  return {
+    totalCustomers: customers.length,
+    pendingAmountTotal: customers.reduce(
+      (sum, customer) => sum + Number(customer.pendingAmount || 0),
+      0,
+    ),
+    activeCustomers: customers.filter((customer) => Number(customer.totalPurchases || 0) > 0).length,
+    newThisMonth: customers.filter((customer) => {
+      const date = new Date(customer.createdAt || customer.$createdAt);
+      return date.getMonth() === month && date.getFullYear() === year;
+    }).length,
+    paidCustomers: customers.filter((customer) => getCustomerPaymentStatus(customer) === 'Paid').length,
+    pendingCustomers: customers.filter((customer) => getCustomerPaymentStatus(customer) === 'Pending').length,
+    overdueCustomers: customers.filter((customer) => getCustomerPaymentStatus(customer) === 'Overdue').length,
+  };
+}
+
+export function calculateSupplierStats(suppliers) {
+  const now = new Date();
+  const month = now.getMonth();
+  const year = now.getFullYear();
+
+  return {
+    totalSuppliers: suppliers.length,
+    totalPaymentDue: suppliers.reduce(
+      (sum, supplier) => sum + Number(supplier.paymentDue || 0),
+      0,
+    ),
+    activeSuppliers: suppliers.filter((supplier) => Number(supplier.totalPurchase || 0) > 0).length,
+    invoicesThisMonth: suppliers.filter((supplier) => {
+      const date = new Date(supplier.lastInvoiceDate);
+      return date.getMonth() === month && date.getFullYear() === year;
+    }).length,
+    paidSuppliers: suppliers.filter((supplier) => getSupplierPaymentStatus(supplier) === 'Paid').length,
+    dueSuppliers: suppliers.filter((supplier) => getSupplierPaymentStatus(supplier) === 'Due').length,
+    overdueSuppliers: suppliers.filter((supplier) => getSupplierPaymentStatus(supplier) === 'Overdue').length,
+  };
+}
+
 export function getSalePaymentStatusBadge(status) {
   const normalizedStatus = status.toLowerCase();
 
@@ -138,6 +192,32 @@ export function getSalePaymentStatusBadge(status) {
   return 'neutral';
 }
 
+export function getSaleStatusLabel(status) {
+  return status || 'Pending';
+}
+
+export function calculateSaleStats(sales = []) {
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const currentMonth = today.slice(0, 7);
+  const activeSales = sales.filter((sale) => sale.paymentStatus !== 'Cancelled');
+
+  return {
+    todaySales: activeSales
+      .filter((sale) => String(sale.saleDate || '').slice(0, 10) === today)
+      .reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0),
+    monthlyRevenue: activeSales
+      .filter((sale) => String(sale.saleDate || '').slice(0, 7) === currentMonth)
+      .reduce((sum, sale) => sum + Number(sale.totalAmount || 0), 0),
+    pendingSales: activeSales
+      .filter((sale) => ['Pending', 'Partial'].includes(sale.paymentStatus))
+      .reduce((sum, sale) => sum + Number(sale.dueAmount || 0), 0),
+    profitThisMonth: activeSales
+      .filter((sale) => String(sale.saleDate || '').slice(0, 7) === currentMonth)
+      .reduce((sum, sale) => sum + Number(sale.profit || 0), 0),
+  };
+}
+
 export function formatFileSize(bytes = 0) {
   if (!bytes) {
     return '0 KB';
@@ -151,6 +231,60 @@ export function formatFileSize(bytes = 0) {
   const value = bytes / 1024 ** unitIndex;
 
   return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+}
+
+export function formatDuration(durationMs = 0) {
+  const seconds = Math.max(0, Number(durationMs || 0) / 1000);
+
+  if (seconds < 1) {
+    return `${Math.round(Number(durationMs || 0))} ms`;
+  }
+
+  return `${seconds.toFixed(seconds >= 10 ? 0 : 1)} sec`;
+}
+
+export function getOcrConfidenceLevel(confidence) {
+  if (confidence === null || confidence === undefined || Number.isNaN(Number(confidence))) {
+    return 'Needs Review';
+  }
+
+  const value = Number(confidence);
+  if (value >= 80) return 'High confidence';
+  if (value >= 60) return 'Medium confidence';
+  return 'Low confidence';
+}
+
+export function getOcrConfidenceBadge(confidence) {
+  const level = getOcrConfidenceLevel(confidence);
+
+  if (level === 'High confidence') return 'success';
+  if (level === 'Medium confidence') return 'warning';
+  if (level === 'Low confidence') return 'danger';
+  return 'neutral';
+}
+
+export function getAiConfidenceLevel(confidence) {
+  if (confidence === null || confidence === undefined || Number.isNaN(Number(confidence))) {
+    return 'AI not run';
+  }
+
+  const value = Number(confidence);
+  if (value >= 85) return 'High Confidence';
+  if (value >= 65) return 'Medium Confidence';
+  return 'Low Confidence';
+}
+
+export function getAiConfidenceBadge(confidence) {
+  const value = Number(confidence);
+
+  if (!Number.isFinite(value)) return 'neutral';
+  if (value >= 85) return 'success';
+  if (value >= 65) return 'warning';
+  return 'danger';
+}
+
+export function getAiReviewStatusBadge(needsManualReview) {
+  return needsManualReview ? 'warning' : 'success';
 }
 
 export function getInvoiceScanStatusBadge(status) {
@@ -168,6 +302,10 @@ export function getInvoiceScanStatusBadge(status) {
     return 'info';
   }
 
+  if (normalizedStatus === 'uploaded') {
+    return 'neutral';
+  }
+
   if (normalizedStatus === 'failed ocr' || normalizedStatus === 'failed') {
     return 'danger';
   }
@@ -177,6 +315,10 @@ export function getInvoiceScanStatusBadge(status) {
 
 export function getInvoiceStatusBadge(status) {
   const normalizedStatus = status.toLowerCase();
+
+  if (normalizedStatus === 'uploaded') {
+    return 'info';
+  }
 
   if (normalizedStatus === 'approved') {
     return 'success';
@@ -199,6 +341,17 @@ export function getInvoiceStatusBadge(status) {
 
 export function getInventoryUpdateLabel(isUpdated) {
   return isUpdated ? 'Updated' : 'Not Updated';
+}
+
+export function getFileTypeLabel(fileType = '') {
+  const normalizedType = fileType.toLowerCase();
+
+  if (normalizedType.includes('pdf')) return 'PDF';
+  if (normalizedType.includes('jpeg') || normalizedType.includes('jpg')) return 'JPG';
+  if (normalizedType.includes('png')) return 'PNG';
+  if (normalizedType.includes('webp')) return 'WEBP';
+
+  return fileType || 'File';
 }
 
 export function getReportStatusBadge(status) {
@@ -226,16 +379,38 @@ export function getReportStatusBadge(status) {
 export function getMetricStatusBadge(status) {
   const normalizedStatus = status.toLowerCase();
 
-  if (normalizedStatus === 'growing' || normalizedStatus === 'healthy') {
+  if (
+    normalizedStatus === 'growing' ||
+    normalizedStatus === 'healthy' ||
+    normalizedStatus === 'paid' ||
+    normalizedStatus === 'ready' ||
+    normalizedStatus === 'credit'
+  ) {
     return 'success';
   }
 
-  if (normalizedStatus === 'needs action' || normalizedStatus === 'attention') {
+  if (
+    normalizedStatus === 'needs action' ||
+    normalizedStatus === 'attention' ||
+    normalizedStatus === 'pending' ||
+    normalizedStatus === 'due' ||
+    normalizedStatus === 'estimate' ||
+    normalizedStatus === 'payable'
+  ) {
     return 'warning';
   }
 
-  if (normalizedStatus === 'declining' || normalizedStatus === 'loss') {
+  if (
+    normalizedStatus === 'declining' ||
+    normalizedStatus === 'loss' ||
+    normalizedStatus === 'overdue' ||
+    normalizedStatus === 'cancelled'
+  ) {
     return 'danger';
+  }
+
+  if (normalizedStatus === 'partial' || normalizedStatus === 'good') {
+    return 'info';
   }
 
   return 'neutral';
@@ -461,7 +636,7 @@ export function getSettingsStatusBadge(status) {
 export function getIntegrationStatusBadge(status) {
   const normalizedStatus = status.toLowerCase();
 
-  if (normalizedStatus === 'connected') {
+  if (normalizedStatus === 'connected' || normalizedStatus === 'configured') {
     return 'success';
   }
 
@@ -469,7 +644,7 @@ export function getIntegrationStatusBadge(status) {
     return 'info';
   }
 
-  if (normalizedStatus === 'not connected') {
+  if (normalizedStatus === 'not connected' || normalizedStatus === 'not configured') {
     return 'warning';
   }
 

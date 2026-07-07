@@ -43,6 +43,7 @@ import {
   getIntegrationStatusBadge,
   getSettingsStatusBadge,
 } from '../../utils/formatters.js';
+import { getAiParseFunctionId } from '../../services/aiInvoiceService.js';
 
 const categoryIcons = {
   Account: UserCog,
@@ -481,6 +482,19 @@ function DataBackupPanel({ onAction, onChange, onSave, onToggle, settings }) {
 }
 
 function IntegrationsPanel({ onAction }) {
+  const aiFunctionConfigured = Boolean(getAiParseFunctionId());
+  const integrations = integrationSettings.map((integration) =>
+    integration.name === 'GPT-5 Nano'
+      ? {
+          ...integration,
+          status: aiFunctionConfigured ? 'Configured' : 'Not Configured',
+          description: aiFunctionConfigured
+            ? 'Secure invoice parsing is routed through an Appwrite Function.'
+            : integration.description,
+        }
+      : integration,
+  );
+
   return (
     <PanelShell
       icon={LinkIcon}
@@ -488,7 +502,7 @@ function IntegrationsPanel({ onAction }) {
       title="Integrations"
     >
       <div className="grid gap-4 md:grid-cols-2">
-        {integrationSettings.map((integration) => (
+        {integrations.map((integration) => (
           <Card hover key={integration.name}>
             <div className="flex items-start justify-between gap-3">
               <div>

@@ -3,12 +3,15 @@ import {
   CheckCircle2,
   CircleAlert,
   Clock,
+  Download,
   Eye,
   FileCheck2,
   FileSearch,
   FileText,
   IndianRupee,
+  Loader2,
   ReceiptText,
+  RefreshCw,
   Search,
   SearchX,
   Send,
@@ -18,7 +21,7 @@ import {
   X,
 } from 'lucide-react';
 import { Link } from 'react-router-dom';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import Badge from '../../components/common/Badge.jsx';
 import Button from '../../components/common/Button.jsx';
@@ -26,13 +29,37 @@ import Card from '../../components/common/Card.jsx';
 import Input from '../../components/common/Input.jsx';
 import SectionHeader from '../../components/common/SectionHeader.jsx';
 import StatCard from '../../components/common/StatCard.jsx';
-import { purchaseInvoices } from '../../data/mockData.js';
+import { useAuth } from '../../context/AuthContext.jsx';
+import { parseInvoiceWithAi } from '../../services/aiInvoiceService.js';
+import {
+  getInvoiceFileDownload,
+  getInvoiceFilePreview,
+  getInvoiceFileView,
+} from '../../services/invoiceStorageService.js';
+import {
+  approvePurchaseInvoice,
+  createInvoiceItem,
+  deletePurchaseInvoice,
+  deleteInvoiceItemsForInvoice,
+  getPurchaseInvoiceWithItems,
+  getInvoiceStats,
+  listPurchaseInvoices,
+  updatePurchaseInvoice,
+} from '../../services/purchaseInvoiceService.js';
 import {
   formatCurrency,
   formatDate,
+  formatDuration,
+  getAiConfidenceBadge,
+  getAiConfidenceLevel,
+  getAiReviewStatusBadge,
+  getFileTypeLabel,
   getInventoryUpdateLabel,
   getInvoiceStatusBadge,
+  getOcrConfidenceBadge,
+  getOcrConfidenceLevel,
 } from '../../utils/formatters.js';
+import { getAiSourceLabel } from '../../utils/aiErrors.js';
 
 const statusFilters = [
   'All Invoices',
@@ -41,14 +68,7 @@ const statusFilters = [
   'Processing',
   'Failed OCR',
   'Rejected',
-];
-const supplierFilters = [
-  'All Suppliers',
-  'ABC Traders',
-  'Metro Suppliers',
-  'Fresh Wholesale',
-  'CleanCo Distributors',
-  'Sunrise Distributors',
+  'Uploaded',
 ];
 const dateFilters = ['Today', 'This Week', 'This Month', 'All Time'];
 const sortOptions = ['Latest', 'Highest Amount', 'Supplier Name', 'Status'];
@@ -56,9 +76,7 @@ const sortOptions = ['Latest', 'Highest Amount', 'Supplier Name', 'Status'];
 function SelectControl({ children, label, name, onChange, value }) {
   return (
     <label className="block" htmlFor={name}>
-      <span className="mb-2 block text-sm font-semibold text-slate-700">
-        {label}
-      </span>
+      <span className="mb-2 block text-sm font-semibold text-slate-700">{label}</span>
       <select
         className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 outline-none transition-all focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
         id={name}
@@ -72,7 +90,32 @@ function SelectControl({ children, label, name, onChange, value }) {
   );
 }
 
-function InvoiceFilters({ filters, onChange, onClear }) {
+function FeedbackBanner({ message, onDismiss, tone = 'info' }) {
+  if (!message) return null;
+
+  const tones = {
+    success: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+    danger: 'border-rose-200 bg-rose-50 text-rose-800',
+    warning: 'border-amber-200 bg-amber-50 text-amber-800',
+    info: 'border-cyan-200 bg-cyan-50 text-cyan-800',
+  };
+
+  return (
+    <div className={clsx('flex items-start justify-between gap-4 rounded-3xl border px-4 py-3 text-sm font-semibold', tones[tone])}>
+      <p>{message}</p>
+      <button
+        aria-label="Dismiss message"
+        className="rounded-full p-1 transition hover:bg-white/60"
+        onClick={onDismiss}
+        type="button"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+function InvoiceFilters({ filters, onChange, onClear, suppliers }) {
   return (
     <Card>
       <div className="grid gap-4 lg:grid-cols-[1.35fr_0.75fr_0.8fr_0.65fr_0.7fr_auto] lg:items-end">
@@ -95,7 +138,8 @@ function InvoiceFilters({ filters, onChange, onClear }) {
           onChange={onChange}
           value={filters.supplier}
         >
-          {supplierFilters.map((supplier) => (
+          <option>All Suppliers</option>
+          {suppliers.map((supplier) => (
             <option key={supplier}>{supplier}</option>
           ))}
         </SelectControl>
@@ -122,7 +166,7 @@ function InvoiceFilters({ filters, onChange, onClear }) {
   );
 }
 
-function ItemPills({ items }) {
+function ItemPills({ items = [] }) {
   const visibleItems = items.slice(0, 2);
   const hiddenCount = Math.max(0, items.length - visibleItems.length);
 
@@ -131,12 +175,13 @@ function ItemPills({ items }) {
       {visibleItems.map((item) => (
         <span
           className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-bold text-slate-600"
-          key={item.productName}
+          key={item.id || item.productName}
         >
           {item.productName}
         </span>
       ))}
       {hiddenCount > 0 ? <Badge>+{hiddenCount} more</Badge> : null}
+      {!items.length ? <Badge>No items</Badge> : null}
     </div>
   );
 }
@@ -168,35 +213,42 @@ function InvoiceInsights({ invoices }) {
       <Card>
         <div className="flex items-center gap-3 text-sm text-slate-500">
           <ReceiptText className="h-5 w-5 text-indigo-500" />
-          Add invoices to see purchase insights here.
+          Scan invoices to see purchase insights here.
         </div>
       </Card>
     );
   }
 
   const highestInvoice = [...invoices].sort((a, b) => b.totalAmount - a.totalAmount)[0];
+  const pendingCount = invoices.filter((invoice) => invoice.status === 'Pending Review').length;
+  const supplierTotals = invoices.reduce((totals, invoice) => {
+    totals[invoice.supplierName] = (totals[invoice.supplierName] || 0) + invoice.totalAmount;
+    return totals;
+  }, {});
+  const topSupplier = Object.entries(supplierTotals).sort(([, a], [, b]) => b - a)[0];
+
   const insights = [
     {
       label: 'Highest Purchase Invoice',
-      value: `${highestInvoice.supplierName} — ${formatCurrency(highestInvoice.totalAmount)}`,
+      value: `${highestInvoice.supplierName} - ${formatCurrency(highestInvoice.totalAmount)}`,
       icon: ReceiptText,
       tone: 'text-indigo-600 bg-indigo-50',
     },
     {
       label: 'Pending Review',
-      value: '5 invoices',
+      value: `${pendingCount} invoices`,
       icon: CircleAlert,
       tone: 'text-amber-600 bg-amber-50',
     },
     {
-      label: 'This Month Purchase Value',
-      value: '₹12,84,500',
+      label: 'Purchase Value',
+      value: formatCurrency(invoices.reduce((sum, invoice) => sum + invoice.totalAmount, 0)),
       icon: IndianRupee,
       tone: 'text-emerald-600 bg-emerald-50',
     },
     {
-      label: 'Most Frequent Supplier',
-      value: 'ABC Traders',
+      label: 'Top Supplier',
+      value: topSupplier ? `${topSupplier[0]} - ${formatCurrency(topSupplier[1])}` : 'No supplier yet',
       icon: FileCheck2,
       tone: 'text-cyan-600 bg-cyan-50',
     },
@@ -226,7 +278,7 @@ function InvoiceInsights({ invoices }) {
   );
 }
 
-function InvoiceTable({ invoices, onApprove, onDelete, onReview, onView }) {
+function InvoiceTable({ actionLoading, invoices, onAiParse, onApprove, onDelete, onReview, onView }) {
   return (
     <Card className="hidden overflow-hidden xl:block" padding="none">
       <div className="overflow-x-auto">
@@ -246,17 +298,17 @@ function InvoiceTable({ invoices, onApprove, onDelete, onReview, onView }) {
           </thead>
           <tbody>
             {invoices.map((invoice) => {
-              const canApprove =
-                invoice.status === 'Pending Review' || invoice.status === 'Processing';
+              const canApprove = ['Pending Review', 'Processing', 'Uploaded'].includes(invoice.status);
+              const canAiParse = Boolean(invoice.extractedText) && !invoice.inventoryUpdated && invoice.status !== 'Approved';
               return (
-                <tr key={invoice.id}>
+                <tr className="transition hover:bg-slate-50/70" key={invoice.id}>
                   <td className="border-t border-slate-100 px-5 py-4">
                     <p className="font-black text-slate-950">{invoice.invoiceNumber}</p>
-                    <p className="text-sm text-slate-500">{invoice.fileName}</p>
+                    <p className="text-sm text-slate-500">{invoice.fileName || 'No file'}</p>
                   </td>
                   <td className="border-t border-slate-100 px-5 py-4">
                     <p className="font-black text-slate-950">{invoice.supplierName}</p>
-                    <p className="text-sm text-slate-500">{invoice.supplierPhone}</p>
+                    <p className="text-sm text-slate-500">{invoice.supplierPhone || 'No phone'}</p>
                   </td>
                   <td className="border-t border-slate-100 px-5 py-4">
                     <ItemPills items={invoice.items} />
@@ -268,9 +320,7 @@ function InvoiceTable({ invoices, onApprove, onDelete, onReview, onView }) {
                     {formatCurrency(invoice.totalAmount)}
                   </td>
                   <td className="border-t border-slate-100 px-5 py-4">
-                    <Badge variant={getInvoiceStatusBadge(invoice.status)}>
-                      {invoice.status}
-                    </Badge>
+                    <Badge variant={getInvoiceStatusBadge(invoice.status)}>{invoice.status}</Badge>
                   </td>
                   <td className="border-t border-slate-100 px-5 py-4">
                     <Badge variant={invoice.inventoryUpdated ? 'success' : 'neutral'}>
@@ -284,6 +334,13 @@ function InvoiceTable({ invoices, onApprove, onDelete, onReview, onView }) {
                     <div className="flex justify-end gap-2">
                       <ActionButton icon={Eye} label="View invoice" onClick={() => onView(invoice)} />
                       <ActionButton icon={FileSearch} label="Review invoice" onClick={() => onReview(invoice)} />
+                      <ActionButton
+                        disabled={!canAiParse || actionLoading === `ai-${invoice.id}`}
+                        icon={Sparkles}
+                        label="AI parse invoice"
+                        onClick={() => onAiParse(invoice)}
+                        tone="accent"
+                      />
                       <ActionButton
                         disabled={!canApprove}
                         icon={CheckCircle2}
@@ -309,75 +366,64 @@ function InvoiceTable({ invoices, onApprove, onDelete, onReview, onView }) {
   );
 }
 
-function InvoiceCard({ invoice, onApprove, onDelete, onReview, onView }) {
-  const canApprove =
-    invoice.status === 'Pending Review' || invoice.status === 'Processing';
+function InvoiceCard({ actionLoading, invoice, onAiParse, onApprove, onDelete, onReview, onView }) {
+  const canApprove = ['Pending Review', 'Processing', 'Uploaded'].includes(invoice.status);
+  const canAiParse = Boolean(invoice.extractedText) && !invoice.inventoryUpdated && invoice.status !== 'Approved';
 
   return (
     <Card className="xl:hidden" hover>
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="font-black text-slate-950">{invoice.invoiceNumber}</p>
-          <p className="mt-1 text-sm font-semibold text-slate-500">
-            {invoice.supplierName}
-          </p>
+          <p className="mt-1 text-sm font-semibold text-slate-500">{invoice.supplierName}</p>
         </div>
         <Badge variant={getInvoiceStatusBadge(invoice.status)}>{invoice.status}</Badge>
       </div>
 
       <div className="mt-5 grid grid-cols-2 gap-3 rounded-3xl bg-slate-50 p-4">
         <div>
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
-            Total
-          </p>
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Total</p>
           <p className="mt-1 text-sm font-black text-slate-950">
             {formatCurrency(invoice.totalAmount)}
           </p>
         </div>
         <div>
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
-            GST
-          </p>
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">GST</p>
           <p className="mt-1 text-sm font-black text-slate-950">
             {formatCurrency(invoice.gstAmount)}
           </p>
         </div>
         <div>
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
-            Items
-          </p>
-          <p className="mt-1 text-sm font-black text-slate-950">
-            {invoice.itemCount}
-          </p>
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Items</p>
+          <p className="mt-1 text-sm font-black text-slate-950">{invoice.itemCount}</p>
         </div>
         <div>
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
-            Inventory
-          </p>
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Inventory</p>
           <p className="mt-1 text-sm font-black text-slate-950">
             {getInventoryUpdateLabel(invoice.inventoryUpdated)}
           </p>
         </div>
         <div className="col-span-2">
-          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
-            Invoice Date
-          </p>
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-400">Invoice Date</p>
           <p className="mt-1 text-sm font-black text-slate-950">
             {formatDate(invoice.invoiceDate)}
           </p>
         </div>
       </div>
 
-      <div className="mt-5 grid grid-cols-3 gap-2">
-        <Button onClick={() => onView(invoice)} size="sm" variant="secondary">
-          View
+      <div className="mt-5 grid grid-cols-2 gap-2">
+        <Button onClick={() => onView(invoice)} size="sm" variant="secondary">View</Button>
+        <Button onClick={() => onReview(invoice)} size="sm" variant="secondary">Review</Button>
+        <Button
+          disabled={!canAiParse}
+          loading={actionLoading === `ai-${invoice.id}`}
+          onClick={() => onAiParse(invoice)}
+          size="sm"
+          variant="secondary"
+        >
+          AI Parse
         </Button>
-        <Button onClick={() => onReview(invoice)} size="sm" variant="secondary">
-          Review
-        </Button>
-        <Button disabled={!canApprove} onClick={() => onApprove(invoice)} size="sm">
-          Approve
-        </Button>
+        <Button disabled={!canApprove} onClick={() => onApprove(invoice)} size="sm">Approve</Button>
       </div>
       <Button className="mt-2 w-full" onClick={() => onDelete(invoice)} size="sm" variant="danger">
         Delete
@@ -415,7 +461,50 @@ function ModalShell({ children, onClose, size = 'max-w-2xl' }) {
   );
 }
 
+function safeJsonSummary(value) {
+  if (!value) return 'No AI extracted summary saved yet.';
+
+  try {
+    const parsed = JSON.parse(value);
+    const parsedData = parsed.parsedData || parsed;
+    if (parsedData.supplierName || parsedData.items) {
+      return `${parsedData.supplierName || 'Invoice'} parsed with ${parsedData.items?.length || 0} items and total ${formatCurrency(parsedData.totalAmount)}.`;
+    }
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return value;
+  }
+}
+
+function getOcrMetadata(invoice) {
+  if (!invoice?.aiExtractedJson) {
+    return {};
+  }
+
+  try {
+    const metadata = JSON.parse(invoice.aiExtractedJson);
+    return {
+      ...metadata,
+      parsedData: metadata.parsedData || metadata,
+      aiResult: metadata.aiResult || null,
+      warnings: metadata.warnings || metadata.parsedData?.warnings || [],
+    };
+  } catch {
+    return {};
+  }
+}
+
 function InvoiceDetailsModal({ invoice, onClose }) {
+  const ocrMetadata = getOcrMetadata(invoice);
+  const aiResult = ocrMetadata.aiResult;
+  const aiConfidence = aiResult?.confidence?.overall;
+  const fileViewUrl = invoice.fileId ? getInvoiceFileView(invoice.fileId) : '';
+  const filePreviewUrl =
+    invoice.fileId && invoice.fileType?.startsWith('image/')
+      ? getInvoiceFilePreview(invoice.fileId)
+      : '';
+  const downloadUrl = invoice.fileId ? getInvoiceFileDownload(invoice.fileId) : '';
+
   return (
     <ModalShell onClose={onClose} size="max-w-3xl">
       <div className="p-5 sm:p-6">
@@ -425,15 +514,28 @@ function InvoiceDetailsModal({ invoice, onClose }) {
               {invoice.invoiceNumber}
             </h2>
             <p className="mt-1 text-sm font-semibold text-slate-500">
-              {invoice.supplierName} · {invoice.supplierPhone}
+              {invoice.supplierName} {invoice.supplierPhone ? `- ${invoice.supplierPhone}` : ''}
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
-              <Badge variant={getInvoiceStatusBadge(invoice.status)}>
-                {invoice.status}
-              </Badge>
+              <Badge variant={getInvoiceStatusBadge(invoice.status)}>{invoice.status}</Badge>
               <Badge variant={invoice.inventoryUpdated ? 'success' : 'neutral'}>
                 {getInventoryUpdateLabel(invoice.inventoryUpdated)}
               </Badge>
+              {ocrMetadata.confidence !== undefined ? (
+                <Badge variant={getOcrConfidenceBadge(ocrMetadata.confidence)}>
+                  {getOcrConfidenceLevel(ocrMetadata.confidence)}
+                </Badge>
+              ) : null}
+              {aiResult ? (
+                <>
+                  <Badge variant={getAiConfidenceBadge(aiConfidence)}>
+                    {getAiConfidenceLevel(aiConfidence)}
+                  </Badge>
+                  <Badge variant={getAiReviewStatusBadge(aiResult.needsManualReview)}>
+                    {aiResult.needsManualReview ? 'AI Needs Review' : 'AI Ready'}
+                  </Badge>
+                </>
+              ) : null}
             </div>
           </div>
           <button
@@ -446,41 +548,98 @@ function InvoiceDetailsModal({ invoice, onClose }) {
           </button>
         </div>
 
+        {filePreviewUrl ? (
+          <div className="mt-6 overflow-hidden rounded-3xl border border-slate-100 bg-slate-50">
+            <img alt="Invoice file preview" className="max-h-80 w-full object-contain" src={filePreviewUrl} />
+          </div>
+        ) : null}
+
+        <div className="mt-6 flex flex-wrap gap-3">
+          {fileViewUrl ? (
+            <Button as="a" href={fileViewUrl} rel="noreferrer" target="_blank" variant="secondary">
+              <Eye className="h-4 w-4" />
+              Open File
+            </Button>
+          ) : null}
+          {downloadUrl ? (
+            <Button as="a" href={downloadUrl} rel="noreferrer" target="_blank" variant="secondary">
+              <Download className="h-4 w-4" />
+              Download
+            </Button>
+          ) : null}
+        </div>
+
         <div className="mt-6 grid gap-3 sm:grid-cols-3">
           {[
             ['Invoice date', formatDate(invoice.invoiceDate)],
-            ['File name', invoice.fileName],
-            ['File type', invoice.fileType],
+            ['File name', invoice.fileName || 'No file'],
+            ['File type', getFileTypeLabel(invoice.fileType)],
+            ['OCR source', ocrMetadata.source || 'Not captured'],
+            ['AI source', aiResult ? getAiSourceLabel(ocrMetadata.source) : 'AI extraction not run yet'],
+            ['AI model', ocrMetadata.model || 'Not configured'],
+            ['OCR time', formatDuration(ocrMetadata.durationMs || 0)],
+            ['Parser', ocrMetadata.parser || 'Not captured'],
             ['Subtotal', formatCurrency(invoice.subtotal)],
             ['GST amount', formatCurrency(invoice.gstAmount)],
             ['Total amount', formatCurrency(invoice.totalAmount)],
           ].map(([label, value]) => (
             <div className="rounded-2xl bg-slate-50 p-4" key={label}>
-              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">
-                {label}
-              </p>
+              <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{label}</p>
               <p className="mt-1 font-black text-slate-950">{value}</p>
             </div>
           ))}
         </div>
 
+        {ocrMetadata.warnings?.length ? (
+          <div className="mt-5 rounded-3xl border border-amber-100 bg-amber-50 p-5">
+            <p className="text-sm font-black text-amber-800">OCR review warnings</p>
+            <ul className="mt-3 space-y-2 text-sm font-semibold text-amber-700">
+              {ocrMetadata.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {aiResult ? (
+          <div className="mt-5 rounded-3xl border border-indigo-100 bg-indigo-50 p-5">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={getAiConfidenceBadge(aiConfidence)}>
+                {getAiConfidenceLevel(aiConfidence)}
+              </Badge>
+              <Badge variant={getAiReviewStatusBadge(aiResult.needsManualReview)}>
+                {aiResult.needsManualReview ? 'Manual review required' : 'Ready for review'}
+              </Badge>
+            </div>
+            <p className="mt-3 text-sm font-semibold leading-6 text-slate-700">
+              AI extraction ran through the secure Appwrite Function. Review supplier, GST,
+              totals, and line items before approval.
+            </p>
+            {ocrMetadata.deterministicChecks?.warnings?.length ? (
+              <ul className="mt-3 space-y-2 text-sm font-semibold text-amber-700">
+                {ocrMetadata.deterministicChecks.warnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ) : (
+          <div className="mt-5 rounded-3xl border border-slate-100 bg-slate-50 p-5 text-sm font-semibold text-slate-600">
+            AI extraction not run yet.
+          </div>
+        )}
+
         <div className="mt-6 overflow-hidden rounded-3xl border border-slate-100">
           {invoice.items.map((item) => (
             <div
               className="grid gap-2 border-b border-slate-100 bg-white p-4 last:border-b-0 sm:grid-cols-[1fr_0.6fr_0.8fr_0.5fr_1fr]"
-              key={item.productName}
+              key={item.id || item.productName}
             >
               <p className="font-black text-slate-950">{item.productName}</p>
-              <p className="text-sm text-slate-500">
-                {item.quantity} {item.unit}
-              </p>
-              <p className="text-sm font-bold text-slate-950">
-                {formatCurrency(item.amount)}
-              </p>
+              <p className="text-sm text-slate-500">{item.quantity} {item.unit}</p>
+              <p className="text-sm font-bold text-slate-950">{formatCurrency(item.amount)}</p>
               <p className="text-sm text-slate-500">{item.gstPercentage}%</p>
-              <p className="text-sm font-semibold text-emerald-600">
-                {item.inventoryAction}
-              </p>
+              <p className="text-sm font-semibold text-emerald-600">{item.inventoryAction}</p>
             </div>
           ))}
         </div>
@@ -489,17 +648,20 @@ function InvoiceDetailsModal({ invoice, onClose }) {
           <div className="rounded-3xl bg-slate-950 p-5">
             <p className="text-sm font-bold text-cyan-100">Extracted OCR text</p>
             <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap text-sm leading-6 text-slate-100">
-              {invoice.extractedText}
+              {invoice.extractedText || 'No OCR text was extracted for this invoice.'}
             </pre>
           </div>
           <div className="rounded-3xl bg-indigo-50 p-5">
-            <p className="text-sm font-bold text-indigo-700">AI extracted summary</p>
-            <p className="mt-3 text-sm leading-6 text-slate-700">
-              {invoice.aiExtractedData}
+            <p className="text-sm font-bold text-indigo-700">
+              {aiResult ? 'AI extracted summary' : 'OCR parsed summary'}
             </p>
+            <pre className="mt-3 max-h-56 overflow-auto whitespace-pre-wrap text-sm leading-6 text-slate-700">
+              {safeJsonSummary(invoice.aiExtractedJson)}
+            </pre>
             <div className="mt-4 rounded-2xl bg-white p-4 text-sm leading-6 text-slate-700">
-              This invoice includes fast-moving grocery products. Approve
-              inventory update after checking quantities.
+              {aiResult
+                ? 'AI understanding is saved for review. Approval remains manual.'
+                : 'This is local OCR plus rule-based parsing. Run AI Parse for stronger extraction.'}
             </div>
           </div>
         </div>
@@ -508,9 +670,10 @@ function InvoiceDetailsModal({ invoice, onClose }) {
   );
 }
 
-function InvoiceReviewModal({ invoice, onClose, onSave }) {
+function InvoiceReviewModal({ invoice, loading, onClose, onSave }) {
   const [values, setValues] = useState({
     supplierName: invoice.supplierName,
+    supplierPhone: invoice.supplierPhone || '',
     invoiceNumber: invoice.invoiceNumber,
     invoiceDate: invoice.invoiceDate,
     subtotal: String(invoice.subtotal),
@@ -534,10 +697,35 @@ function InvoiceReviewModal({ invoice, onClose, onSave }) {
     }));
   }
 
+  function addItem() {
+    setValues((current) => ({
+      ...current,
+      items: [
+        ...current.items,
+        {
+          productName: '',
+          quantity: 0,
+          unit: '',
+          amount: 0,
+          gstPercentage: 0,
+          inventoryAction: 'Review manually',
+        },
+      ],
+    }));
+  }
+
+  function removeItem(index) {
+    setValues((current) => ({
+      ...current,
+      items: current.items.filter((_, itemIndex) => itemIndex !== index),
+    }));
+  }
+
   function handleSave() {
     onSave({
       ...invoice,
       supplierName: values.supplierName,
+      supplierPhone: values.supplierPhone,
       invoiceNumber: values.invoiceNumber,
       invoiceDate: values.invoiceDate,
       subtotal: Number(values.subtotal),
@@ -546,11 +734,13 @@ function InvoiceReviewModal({ invoice, onClose, onSave }) {
       status: values.status,
       items: values.items.map((item) => ({
         ...item,
+        productName: item.productName,
         quantity: Number(item.quantity),
+        unit: item.unit || '',
         amount: Number(item.amount),
+        gstPercentage: Number(item.gstPercentage),
+        inventoryAction: item.inventoryAction || 'Review manually',
       })),
-      itemCount: values.items.length,
-      updatedAt: new Date().toISOString(),
     });
   }
 
@@ -559,7 +749,7 @@ function InvoiceReviewModal({ invoice, onClose, onSave }) {
       <div className="p-5 sm:p-6">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="text-sm font-bold text-indigo-600">Local review mode</p>
+            <p className="text-sm font-bold text-indigo-600">Appwrite review mode</p>
             <h2 className="mt-1 text-2xl font-black tracking-tight text-slate-950">
               Review Invoice
             </h2>
@@ -575,69 +765,39 @@ function InvoiceReviewModal({ invoice, onClose, onSave }) {
         </div>
 
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
-          <Input
-            label="Supplier name"
-            name="supplierName"
-            onChange={updateField}
-            value={values.supplierName}
-          />
-          <Input
-            label="Invoice number"
-            name="invoiceNumber"
-            onChange={updateField}
-            value={values.invoiceNumber}
-          />
-          <Input
-            label="Invoice date"
-            name="invoiceDate"
-            onChange={updateField}
-            type="date"
-            value={values.invoiceDate}
-          />
-          <label className="block" htmlFor="status">
-            <span className="mb-2 block text-sm font-semibold text-slate-700">
-              Status
-            </span>
-            <select
-              className="h-12 w-full rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 outline-none transition-all focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100"
-              id="status"
-              name="status"
-              onChange={updateField}
-              value={values.status}
-            >
-              {statusFilters.slice(1).map((status) => (
-                <option key={status}>{status}</option>
-              ))}
-            </select>
-          </label>
-          <Input
-            label="Subtotal"
-            name="subtotal"
-            onChange={updateField}
-            type="number"
-            value={values.subtotal}
-          />
-          <Input
-            label="GST amount"
-            name="gstAmount"
-            onChange={updateField}
-            type="number"
-            value={values.gstAmount}
-          />
-          <Input
-            label="Total amount"
-            name="totalAmount"
-            onChange={updateField}
-            type="number"
-            value={values.totalAmount}
-          />
+          <Input label="Supplier name" name="supplierName" onChange={updateField} value={values.supplierName} />
+          <Input label="Supplier phone" name="supplierPhone" onChange={updateField} value={values.supplierPhone} />
+          <Input label="Invoice number" name="invoiceNumber" onChange={updateField} value={values.invoiceNumber} />
+          <Input label="Invoice date" name="invoiceDate" onChange={updateField} type="date" value={values.invoiceDate} />
+          <SelectControl label="Status" name="status" onChange={updateField} value={values.status}>
+            {statusFilters.slice(1).map((status) => (
+              <option key={status}>{status}</option>
+            ))}
+          </SelectControl>
+          <Input label="Subtotal" name="subtotal" onChange={updateField} type="number" value={values.subtotal} />
+          <Input label="GST amount" name="gstAmount" onChange={updateField} type="number" value={values.gstAmount} />
+          <Input label="Total amount" name="totalAmount" onChange={updateField} type="number" value={values.totalAmount} />
         </div>
 
         <div className="mt-6 space-y-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <p className="font-black text-slate-950">Invoice items</p>
+              <p className="mt-1 text-sm text-slate-500">
+                Review AI/OCR extracted line items before approval.
+              </p>
+            </div>
+            <Button onClick={addItem} size="sm" variant="secondary">Add Item</Button>
+          </div>
           {values.items.map((item, index) => (
-            <div className="rounded-3xl bg-slate-50 p-4" key={item.productName}>
-              <p className="mb-3 font-black text-slate-950">{item.productName}</p>
-              <div className="grid gap-3 sm:grid-cols-2">
+            <div className="rounded-3xl bg-slate-50 p-4" key={item.id || `${item.productName}-${index}`}>
+              <div className="grid gap-3 sm:grid-cols-3">
+                <Input
+                  label="Product name"
+                  name={`product-${index}`}
+                  onChange={(event) => updateItem(index, 'productName', event.target.value)}
+                  value={item.productName}
+                />
                 <Input
                   label="Quantity"
                   name={`quantity-${index}`}
@@ -646,35 +806,52 @@ function InvoiceReviewModal({ invoice, onClose, onSave }) {
                   value={String(item.quantity)}
                 />
                 <Input
+                  label="Unit"
+                  name={`unit-${index}`}
+                  onChange={(event) => updateItem(index, 'unit', event.target.value)}
+                  value={item.unit || ''}
+                />
+                <Input
                   label="Amount"
                   name={`amount-${index}`}
                   onChange={(event) => updateItem(index, 'amount', event.target.value)}
                   type="number"
                   value={String(item.amount)}
                 />
+                <Input
+                  label="GST %"
+                  name={`gst-${index}`}
+                  onChange={(event) => updateItem(index, 'gstPercentage', event.target.value)}
+                  type="number"
+                  value={String(item.gstPercentage)}
+                />
+                <Input
+                  label="Inventory action"
+                  name={`action-${index}`}
+                  onChange={(event) => updateItem(index, 'inventoryAction', event.target.value)}
+                  value={item.inventoryAction || ''}
+                />
+                <Button onClick={() => removeItem(index)} rounded="2xl" variant="danger">
+                  Remove
+                </Button>
               </div>
             </div>
           ))}
           <p className="text-sm text-slate-500">
-            More detailed item editing can be connected later with real invoice
-            extraction.
+            AI extraction is secure server-side when configured. Approval remains manual.
           </p>
         </div>
 
         <div className="mt-7 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-          <Button onClick={onClose} rounded="2xl" variant="secondary">
-            Cancel
-          </Button>
-          <Button onClick={handleSave} rounded="2xl">
-            Save Review
-          </Button>
+          <Button onClick={onClose} rounded="2xl" variant="secondary">Cancel</Button>
+          <Button loading={loading} onClick={handleSave} rounded="2xl">Save Review</Button>
         </div>
       </div>
     </ModalShell>
   );
 }
 
-function ApproveInvoiceModal({ invoice, onCancel, onConfirm }) {
+function ApproveInvoiceModal({ invoice, loading, onCancel, onConfirm }) {
   return (
     <ModalShell onClose={onCancel} size="max-w-md">
       <div className="p-5 sm:p-6">
@@ -682,26 +859,23 @@ function ApproveInvoiceModal({ invoice, onCancel, onConfirm }) {
           <CheckCircle2 className="h-6 w-6" />
         </div>
         <h2 className="mt-5 text-2xl font-black tracking-tight text-slate-950">
-          Approve invoice and update inventory?
+          Approve this invoice?
         </h2>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          This will mark {invoice.invoiceNumber} as approved and simulate
-          inventory update for extracted items.
+          This will mark {invoice.invoiceNumber} as approved. Inventory update automation remains simulated for now.
         </p>
         <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-          <Button onClick={onCancel} rounded="2xl" variant="secondary">
-            Cancel
-          </Button>
-          <Button onClick={onConfirm} rounded="2xl">
-            Approve Invoice
-          </Button>
+          <Button onClick={onCancel} rounded="2xl" variant="secondary">Cancel</Button>
+          <Button loading={loading} onClick={onConfirm} rounded="2xl">Approve Invoice</Button>
         </div>
       </div>
     </ModalShell>
   );
 }
 
-function DeleteConfirmModal({ invoice, onCancel, onConfirm }) {
+function DeleteConfirmModal({ invoice, loading, onCancel, onConfirm }) {
+  const [deleteFile, setDeleteFile] = useState(Boolean(invoice.fileId));
+
   return (
     <ModalShell onClose={onCancel} size="max-w-md">
       <div className="p-5 sm:p-6">
@@ -712,13 +886,21 @@ function DeleteConfirmModal({ invoice, onCancel, onConfirm }) {
           Delete this invoice record?
         </h2>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          {invoice.invoiceNumber} will be removed from this local invoice list.
+          {invoice.invoiceNumber} and its invoice item rows will be deleted from Appwrite.
         </p>
+        <label className="mt-5 flex items-center gap-3 rounded-2xl bg-slate-50 p-3 text-sm font-semibold text-slate-700">
+          <input
+            checked={deleteFile}
+            className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+            disabled={!invoice.fileId}
+            onChange={(event) => setDeleteFile(event.target.checked)}
+            type="checkbox"
+          />
+          Also delete uploaded file
+        </label>
         <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
-          <Button onClick={onCancel} rounded="2xl" variant="secondary">
-            Cancel
-          </Button>
-          <Button onClick={onConfirm} rounded="2xl" variant="danger">
+          <Button onClick={onCancel} rounded="2xl" variant="secondary">Cancel</Button>
+          <Button loading={loading} onClick={() => onConfirm({ deleteFile })} rounded="2xl" variant="danger">
             Delete Invoice
           </Button>
         </div>
@@ -727,21 +909,30 @@ function DeleteConfirmModal({ invoice, onCancel, onConfirm }) {
   );
 }
 
-function EmptyState({ onClear }) {
+function EmptyState({ isInitialEmpty, onClear }) {
   return (
     <Card className="text-center" padding="lg">
       <div className="mx-auto grid h-14 w-14 place-items-center rounded-3xl bg-slate-100 text-slate-500">
         <SearchX className="h-7 w-7" />
       </div>
       <h2 className="mt-5 text-2xl font-black text-slate-950">
-        No invoices found
+        {isInitialEmpty ? 'No invoices uploaded yet' : 'No invoices found'}
       </h2>
-      <p className="mt-2 text-sm text-slate-500">
-        Try changing your search or filters.
+      <p className="mx-auto mt-2 max-w-md text-sm text-slate-500">
+        {isInitialEmpty
+          ? 'Scan your first supplier invoice to save purchase records and prepare inventory updates.'
+          : 'Try changing your search or filters.'}
       </p>
-      <Button className="mt-6" onClick={onClear} variant="secondary">
-        Clear filters
-      </Button>
+      <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
+        {isInitialEmpty ? (
+          <Button as={Link} to="/invoice-scanner">
+            <FileSearch className="h-4 w-4" />
+            Scan Invoice
+          </Button>
+        ) : (
+          <Button onClick={onClear} variant="secondary">Clear filters</Button>
+        )}
+      </div>
     </Card>
   );
 }
@@ -756,8 +947,7 @@ function InvoiceScannerCTA() {
         <div>
           <h2 className="text-xl font-black">Need to add a new purchase invoice?</h2>
           <p className="mt-2 text-sm leading-6 text-slate-300">
-            Use Invoice Scanner to extract supplier, items, GST, and total amount
-            automatically.
+            Use Invoice Scanner to extract supplier, items, GST, and total amount automatically.
           </p>
         </div>
         <Button as={Link} to="/invoice-scanner" variant="secondary">
@@ -768,32 +958,57 @@ function InvoiceScannerCTA() {
   );
 }
 
-function isWithinDateFilter(invoiceDate, filter, referenceDate) {
-  if (filter === 'All Time') {
-    return true;
-  }
+function LoadingState() {
+  return (
+    <Card className="grid min-h-[280px] place-items-center text-center" padding="lg">
+      <div>
+        <div className="mx-auto grid h-14 w-14 place-items-center rounded-3xl bg-indigo-50 text-indigo-600">
+          <Loader2 className="h-7 w-7 animate-spin" />
+        </div>
+        <h2 className="mt-5 text-xl font-black text-slate-950">Loading invoices</h2>
+        <p className="mt-2 text-sm text-slate-500">Fetching purchase invoices and item rows from Appwrite.</p>
+      </div>
+    </Card>
+  );
+}
 
-  const invoiceTime = new Date(`${invoiceDate}T00:00:00`).getTime();
-  const referenceTime = new Date(`${referenceDate}T00:00:00`).getTime();
+function isWithinDateFilter(invoiceDate, filter) {
+  if (filter === 'All Time') return true;
 
-  if (filter === 'Today') {
-    return invoiceDate === referenceDate;
-  }
+  const invoiceTime = new Date(invoiceDate).getTime();
+  const now = new Date();
 
-  if (filter === 'This Week') {
-    const sevenDays = 6 * 24 * 60 * 60 * 1000;
-    return invoiceTime >= referenceTime - sevenDays && invoiceTime <= referenceTime;
-  }
-
-  if (filter === 'This Month') {
-    return invoiceDate.slice(0, 7) === referenceDate.slice(0, 7);
-  }
+  if (Number.isNaN(invoiceTime)) return false;
+  if (filter === 'Today') return String(invoiceDate).slice(0, 10) === now.toISOString().slice(0, 10);
+  if (filter === 'This Week') return invoiceTime >= now.getTime() - 6 * 24 * 60 * 60 * 1000 && invoiceTime <= now.getTime();
+  if (filter === 'This Month') return String(invoiceDate).slice(0, 7) === now.toISOString().slice(0, 7);
 
   return true;
 }
 
+function getInvoiceInsight(invoices, stats) {
+  if (!invoices.length) return 'Scan your first invoice to unlock supplier purchase insights.';
+  if (stats.pendingReview > 0) {
+    return `You have ${stats.pendingReview} invoices pending review. Approve them to keep purchase records accurate.`;
+  }
+
+  const supplierTotals = invoices.reduce((totals, invoice) => {
+    totals[invoice.supplierName] = (totals[invoice.supplierName] || 0) + invoice.totalAmount;
+    return totals;
+  }, {});
+  const topSupplier = Object.entries(supplierTotals).sort(([, a], [, b]) => b - a)[0];
+
+  return topSupplier
+    ? `${topSupplier[0]} has the highest purchase value this month.`
+    : 'Review scanned invoices to keep purchase records accurate.';
+}
+
 export default function InvoicesPage() {
-  const [invoices, setInvoices] = useState(purchaseInvoices);
+  const { user } = useAuth();
+  const [invoices, setInvoices] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState('');
+  const [feedback, setFeedback] = useState({ message: '', tone: 'info' });
   const [filters, setFilters] = useState({
     search: '',
     status: 'All Invoices',
@@ -802,53 +1017,60 @@ export default function InvoicesPage() {
     sortBy: 'Latest',
   });
   const [modalState, setModalState] = useState({ type: null, invoice: null });
-  const [successMessage, setSuccessMessage] = useState('');
 
-  const referenceDate = useMemo(
-    () =>
-      [...invoices].sort((a, b) => b.invoiceDate.localeCompare(a.invoiceDate))[0]
-        ?.invoiceDate || '2026-07-05',
+  const loadInvoices = useCallback(async () => {
+    if (!user?.$id) return;
+
+    setLoading(true);
+    try {
+      setInvoices(await listPurchaseInvoices(user.$id));
+    } catch (error) {
+      setFeedback({ message: error.message || 'Could not load invoices.', tone: 'danger' });
+    } finally {
+      setLoading(false);
+    }
+  }, [user?.$id]);
+
+  useEffect(() => {
+    loadInvoices();
+  }, [loadInvoices]);
+
+  const stats = useMemo(() => getInvoiceStats(invoices), [invoices]);
+  const suppliers = useMemo(
+    () => [...new Set(invoices.map((invoice) => invoice.supplierName).filter(Boolean))],
     [invoices],
   );
-
+  const hasActiveFilters = Boolean(
+    filters.search ||
+      filters.status !== 'All Invoices' ||
+      filters.supplier !== 'All Suppliers' ||
+      filters.dateFilter !== 'All Time' ||
+      filters.sortBy !== 'Latest',
+  );
   const filteredInvoices = useMemo(() => {
     const searchTerm = filters.search.trim().toLowerCase();
     const nextInvoices = invoices.filter((invoice) => {
+      const itemNames = invoice.items.map((item) => item.productName).join(' ').toLowerCase();
       const matchesSearch =
         !searchTerm ||
         invoice.invoiceNumber.toLowerCase().includes(searchTerm) ||
         invoice.supplierName.toLowerCase().includes(searchTerm) ||
-        invoice.items.some((item) => item.productName.toLowerCase().includes(searchTerm));
-      const matchesStatus =
-        filters.status === 'All Invoices' || invoice.status === filters.status;
-      const matchesSupplier =
-        filters.supplier === 'All Suppliers' ||
-        invoice.supplierName === filters.supplier;
-      const matchesDate = isWithinDateFilter(
-        invoice.invoiceDate,
-        filters.dateFilter,
-        referenceDate,
-      );
+        String(invoice.supplierPhone || '').toLowerCase().includes(searchTerm) ||
+        itemNames.includes(searchTerm);
+      const matchesStatus = filters.status === 'All Invoices' || invoice.status === filters.status;
+      const matchesSupplier = filters.supplier === 'All Suppliers' || invoice.supplierName === filters.supplier;
+      const matchesDate = isWithinDateFilter(invoice.invoiceDate, filters.dateFilter);
 
       return matchesSearch && matchesStatus && matchesSupplier && matchesDate;
     });
 
     return [...nextInvoices].sort((a, b) => {
-      if (filters.sortBy === 'Highest Amount') {
-        return b.totalAmount - a.totalAmount;
-      }
-
-      if (filters.sortBy === 'Supplier Name') {
-        return a.supplierName.localeCompare(b.supplierName);
-      }
-
-      if (filters.sortBy === 'Status') {
-        return a.status.localeCompare(b.status);
-      }
-
-      return new Date(b.createdAt) - new Date(a.createdAt);
+      if (filters.sortBy === 'Highest Amount') return b.totalAmount - a.totalAmount;
+      if (filters.sortBy === 'Supplier Name') return a.supplierName.localeCompare(b.supplierName);
+      if (filters.sortBy === 'Status') return a.status.localeCompare(b.status);
+      return new Date(b.createdAt || b.invoiceDate) - new Date(a.createdAt || a.invoiceDate);
     });
-  }, [filters, invoices, referenceDate]);
+  }, [filters, invoices]);
 
   function updateFilter(event) {
     const { name, value } = event.target;
@@ -865,37 +1087,97 @@ export default function InvoicesPage() {
     });
   }
 
-  function saveReview(invoice) {
-    setInvoices((current) =>
-      current.map((item) => (item.id === invoice.id ? invoice : item)),
-    );
-    setModalState({ type: null, invoice: null });
+  async function saveReview(invoice) {
+    if (!user?.$id) return;
+
+    setActionLoading('review');
+    try {
+      await updatePurchaseInvoice(user.$id, invoice.id, {
+        supplierName: invoice.supplierName,
+        supplierPhone: invoice.supplierPhone,
+        invoiceNumber: invoice.invoiceNumber,
+        invoiceDate: invoice.invoiceDate,
+        subtotal: invoice.subtotal,
+        gstAmount: invoice.gstAmount,
+        totalAmount: invoice.totalAmount,
+        status: invoice.status,
+      });
+      await deleteInvoiceItemsForInvoice(user.$id, invoice.id);
+      await Promise.all(
+        invoice.items
+          .filter((item) => item.productName)
+          .map((item) => createInvoiceItem(user.$id, invoice.id, item)),
+      );
+      setFeedback({ message: 'AI review saved.', tone: 'success' });
+      setModalState({ type: null, invoice: null });
+      await loadInvoices();
+    } catch (error) {
+      setFeedback({ message: error.message || 'Could not save invoice review.', tone: 'danger' });
+    } finally {
+      setActionLoading('');
+    }
   }
 
-  function approveInvoice() {
-    const now = new Date().toISOString();
-    setInvoices((current) =>
-      current.map((invoice) =>
-        invoice.id === modalState.invoice.id
-          ? {
-              ...invoice,
-              status: 'Approved',
-              inventoryUpdated: true,
-              updatedAt: now,
-            }
-          : invoice,
-      ),
-    );
-    setSuccessMessage('Invoice approved. Inventory update simulated.');
-    setModalState({ type: null, invoice: null });
-    window.setTimeout(() => setSuccessMessage(''), 2600);
+  async function parseInvoiceAi(invoice) {
+    if (!user?.$id || !invoice?.id) return;
+
+    setActionLoading(`ai-${invoice.id}`);
+    setFeedback({
+      message: 'AI is understanding supplier, GST, totals, and items...',
+      tone: 'info',
+    });
+
+    try {
+      const result = await parseInvoiceWithAi(invoice.id);
+      const refreshed = await getPurchaseInvoiceWithItems(user.$id, invoice.id);
+      setFeedback({
+        message: result.needsManualReview
+          ? 'AI extraction completed but needs manual review.'
+          : 'AI extraction completed. Please review before approval.',
+        tone: result.needsManualReview ? 'warning' : 'success',
+      });
+      setModalState({ type: 'view', invoice: refreshed });
+      await loadInvoices();
+    } catch (error) {
+      setFeedback({
+        message: error.message || 'AI could not parse this invoice. Try again or review manually.',
+        tone: 'danger',
+      });
+    } finally {
+      setActionLoading('');
+    }
   }
 
-  function deleteInvoice() {
-    setInvoices((current) =>
-      current.filter((invoice) => invoice.id !== modalState.invoice.id),
-    );
-    setModalState({ type: null, invoice: null });
+  async function approveInvoice() {
+    if (!user?.$id || !modalState.invoice) return;
+
+    setActionLoading('approve');
+    try {
+      await approvePurchaseInvoice(user.$id, modalState.invoice.id);
+      setFeedback({ message: 'Invoice approved.', tone: 'success' });
+      setModalState({ type: null, invoice: null });
+      await loadInvoices();
+    } catch (error) {
+      setFeedback({ message: error.message || 'Could not approve invoice.', tone: 'danger' });
+    } finally {
+      setActionLoading('');
+    }
+  }
+
+  async function deleteInvoice(options) {
+    if (!user?.$id || !modalState.invoice) return;
+
+    setActionLoading('delete');
+    try {
+      await deletePurchaseInvoice(user.$id, modalState.invoice.id, options);
+      setFeedback({ message: 'Invoice deleted successfully.', tone: 'success' });
+      setModalState({ type: null, invoice: null });
+      await loadInvoices();
+    } catch (error) {
+      setFeedback({ message: error.message || 'Could not delete invoice.', tone: 'danger' });
+    } finally {
+      setActionLoading('');
+    }
   }
 
   return (
@@ -903,6 +1185,10 @@ export default function InvoicesPage() {
       <SectionHeader
         action={
           <div className="flex flex-col gap-3 sm:flex-row">
+            <Button onClick={loadInvoices} variant="secondary">
+              <RefreshCw className="h-4 w-4" />
+              Refresh
+            </Button>
             <Button variant="secondary">
               <Send className="h-4 w-4" />
               Export
@@ -917,41 +1203,17 @@ export default function InvoicesPage() {
         title="Invoices"
       />
 
-      {successMessage ? (
-        <div className="rounded-3xl border border-emerald-100 bg-emerald-50 p-4 text-sm font-semibold text-emerald-700">
-          {successMessage}
-        </div>
-      ) : null}
+      <FeedbackBanner
+        message={feedback.message}
+        onDismiss={() => setFeedback({ message: '', tone: 'info' })}
+        tone={feedback.tone}
+      />
 
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          icon={ReceiptText}
-          status="info"
-          title="Total Invoices"
-          trend="All scanned purchases"
-          value="128"
-        />
-        <StatCard
-          icon={FileCheck2}
-          status="success"
-          title="Approved"
-          trend="Inventory-ready"
-          value="96"
-        />
-        <StatCard
-          icon={Clock}
-          status="warning"
-          title="Pending Review"
-          trend="Needs owner check"
-          value="5"
-        />
-        <StatCard
-          icon={IndianRupee}
-          status="success"
-          title="Total Purchase Value"
-          trend="This month"
-          value="₹12,84,500"
-        />
+        <StatCard icon={ReceiptText} status="info" title="Total Invoices" trend="Stored in Appwrite" value={String(stats.totalInvoices)} />
+        <StatCard icon={FileCheck2} status="success" title="Approved" trend="Owner reviewed" value={String(stats.approved)} />
+        <StatCard icon={Clock} status="warning" title="Pending Review" trend="Needs owner check" value={String(stats.pendingReview)} />
+        <StatCard icon={IndianRupee} status="success" title="Total Purchase Value" trend="Excludes rejected" value={formatCurrency(stats.totalPurchaseValue)} />
       </section>
 
       <Card className="overflow-hidden bg-gradient-to-br from-slate-950 to-indigo-950 text-white">
@@ -960,20 +1222,12 @@ export default function InvoicesPage() {
             <WandSparkles className="h-6 w-6" />
           </div>
           <div>
-            <Badge className="bg-white/10 text-cyan-100 ring-white/15" variant="neutral">
-              AI Insight
-            </Badge>
+            <Badge className="bg-white/10 text-cyan-100 ring-white/15" variant="neutral">AI Insight</Badge>
             <p className="mt-3 max-w-3xl text-lg font-bold leading-7 text-white">
-              ABC Traders and Fresh Wholesale account for 42% of this month&apos;s
-              purchase value. Review pending invoices to keep inventory accurate.
+              {getInvoiceInsight(invoices, stats)}
             </p>
           </div>
-          <Button
-            onClick={() =>
-              setFilters((current) => ({ ...current, status: 'Pending Review' }))
-            }
-            variant="secondary"
-          >
+          <Button onClick={() => setFilters((current) => ({ ...current, status: 'Pending Review' }))} variant="secondary">
             <Sparkles className="h-4 w-4" />
             Review pending invoices
           </Button>
@@ -982,28 +1236,31 @@ export default function InvoicesPage() {
 
       <InvoiceInsights invoices={invoices} />
       <InvoiceScannerCTA />
-
-      <InvoiceFilters filters={filters} onChange={updateFilter} onClear={clearFilters} />
+      <InvoiceFilters filters={filters} onChange={updateFilter} onClear={clearFilters} suppliers={suppliers} />
 
       <Card>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h2 className="text-xl font-black text-slate-950">Purchase Invoices</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Showing {filteredInvoices.length} of {invoices.length} local demo invoices.
+              Showing {filteredInvoices.length} of {invoices.length} Appwrite invoice records.
             </p>
           </div>
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-500">
             <FileText className="h-4 w-4 text-indigo-500" />
-            Local invoice data only
+            Files stay private in Appwrite Storage
           </div>
         </div>
       </Card>
 
-      {filteredInvoices.length ? (
+      {loading ? (
+        <LoadingState />
+      ) : filteredInvoices.length ? (
         <>
           <InvoiceTable
+            actionLoading={actionLoading}
             invoices={filteredInvoices}
+            onAiParse={parseInvoiceAi}
             onApprove={(invoice) => setModalState({ type: 'approve', invoice })}
             onDelete={(invoice) => setModalState({ type: 'delete', invoice })}
             onReview={(invoice) => setModalState({ type: 'review', invoice })}
@@ -1014,36 +1271,28 @@ export default function InvoicesPage() {
               <InvoiceCard
                 invoice={invoice}
                 key={invoice.id}
-                onApprove={(selectedInvoice) =>
-                  setModalState({ type: 'approve', invoice: selectedInvoice })
-                }
-                onDelete={(selectedInvoice) =>
-                  setModalState({ type: 'delete', invoice: selectedInvoice })
-                }
-                onReview={(selectedInvoice) =>
-                  setModalState({ type: 'review', invoice: selectedInvoice })
-                }
-                onView={(selectedInvoice) =>
-                  setModalState({ type: 'view', invoice: selectedInvoice })
-                }
+                actionLoading={actionLoading}
+                onAiParse={parseInvoiceAi}
+                onApprove={(selectedInvoice) => setModalState({ type: 'approve', invoice: selectedInvoice })}
+                onDelete={(selectedInvoice) => setModalState({ type: 'delete', invoice: selectedInvoice })}
+                onReview={(selectedInvoice) => setModalState({ type: 'review', invoice: selectedInvoice })}
+                onView={(selectedInvoice) => setModalState({ type: 'view', invoice: selectedInvoice })}
               />
             ))}
           </div>
         </>
       ) : (
-        <EmptyState onClear={clearFilters} />
+        <EmptyState isInitialEmpty={!invoices.length && !hasActiveFilters} onClear={clearFilters} />
       )}
 
       {modalState.type === 'view' && modalState.invoice ? (
-        <InvoiceDetailsModal
-          invoice={modalState.invoice}
-          onClose={() => setModalState({ type: null, invoice: null })}
-        />
+        <InvoiceDetailsModal invoice={modalState.invoice} onClose={() => setModalState({ type: null, invoice: null })} />
       ) : null}
 
       {modalState.type === 'review' && modalState.invoice ? (
         <InvoiceReviewModal
           invoice={modalState.invoice}
+          loading={actionLoading === 'review'}
           onClose={() => setModalState({ type: null, invoice: null })}
           onSave={saveReview}
         />
@@ -1052,6 +1301,7 @@ export default function InvoicesPage() {
       {modalState.type === 'approve' && modalState.invoice ? (
         <ApproveInvoiceModal
           invoice={modalState.invoice}
+          loading={actionLoading === 'approve'}
           onCancel={() => setModalState({ type: null, invoice: null })}
           onConfirm={approveInvoice}
         />
@@ -1060,6 +1310,7 @@ export default function InvoicesPage() {
       {modalState.type === 'delete' && modalState.invoice ? (
         <DeleteConfirmModal
           invoice={modalState.invoice}
+          loading={actionLoading === 'delete'}
           onCancel={() => setModalState({ type: null, invoice: null })}
           onConfirm={deleteInvoice}
         />

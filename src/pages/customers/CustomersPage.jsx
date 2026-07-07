@@ -3,7 +3,9 @@ import {
   BellRing,
   Eye,
   IndianRupee,
+  Loader2,
   Pencil,
+  RefreshCw,
   Search,
   SearchX,
   Send,
@@ -17,7 +19,7 @@ import {
   WandSparkles,
   X,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import Badge from '../../components/common/Badge.jsx';
 import Button from '../../components/common/Button.jsx';
@@ -25,7 +27,15 @@ import Card from '../../components/common/Card.jsx';
 import Input from '../../components/common/Input.jsx';
 import SectionHeader from '../../components/common/SectionHeader.jsx';
 import StatCard from '../../components/common/StatCard.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
 import { businessProfile, customers as mockCustomers } from '../../data/mockData.js';
+import {
+  createCustomer,
+  deleteCustomer,
+  getCustomerStats,
+  listCustomers,
+  updateCustomer,
+} from '../../services/customerService.js';
 import {
   formatCurrency,
   formatDate,
@@ -389,7 +399,7 @@ function ModalShell({ children, onClose, size = 'max-w-2xl' }) {
   );
 }
 
-function CustomerModal({ customer, mode, onClose, onSave }) {
+function CustomerModal({ customer, formError, isSaving, mode, onClose, onSave }) {
   const [values, setValues] = useState(() => {
     if (!customer) {
       return emptyCustomerForm;
@@ -424,15 +434,15 @@ function CustomerModal({ customer, mode, onClose, onSave }) {
       nextErrors.phone = 'Enter a valid 10-digit Indian mobile number.';
     }
 
-    if (!values.address.trim()) {
-      nextErrors.address = 'Address is required.';
+    if (values.pendingAmount !== '' && Number(values.pendingAmount) < 0) {
+      nextErrors.pendingAmount = 'Pending amount must be 0 or more.';
     }
 
     setErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   }
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
 
     if (!validate()) {
@@ -442,8 +452,8 @@ function CustomerModal({ customer, mode, onClose, onSave }) {
     const now = new Date().toISOString();
     const pendingAmount = Number(values.pendingAmount || 0);
 
-    onSave({
-      id: customer?.id ?? Date.now(),
+    await onSave({
+      id: customer?.id,
       name: values.name.trim(),
       phone: values.phone.trim(),
       address: values.address.trim(),
@@ -479,6 +489,12 @@ function CustomerModal({ customer, mode, onClose, onSave }) {
           </button>
         </div>
 
+        {formError ? (
+          <div className="mt-5 rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700">
+            {formError}
+          </div>
+        ) : null}
+
         <div className="mt-6 grid gap-4 sm:grid-cols-2">
           <Input
             error={errors.name}
@@ -508,6 +524,7 @@ function CustomerModal({ customer, mode, onClose, onSave }) {
             />
           </div>
           <Input
+            error={errors.pendingAmount}
             label="Opening pending amount"
             name="pendingAmount"
             onChange={updateField}
@@ -528,7 +545,7 @@ function CustomerModal({ customer, mode, onClose, onSave }) {
           <Button onClick={onClose} rounded="2xl" type="button" variant="secondary">
             Cancel
           </Button>
-          <Button rounded="2xl" type="submit">
+          <Button loading={isSaving} rounded="2xl" type="submit">
             {mode === 'edit' ? 'Save Changes' : 'Save Customer'}
           </Button>
         </div>
@@ -547,6 +564,8 @@ function CustomerDetailsModal({ customer, onClose }) {
     ['Last purchase date', formatDate(customer.lastPurchaseDate)],
     ['Payment status', status],
     ['Notes', customer.notes],
+    ['Created date', formatDate(customer.createdAt || customer.$createdAt)],
+    ['Updated date', formatDate(customer.updatedAt || customer.$updatedAt)],
   ];
 
   return (
@@ -595,8 +614,9 @@ function CustomerDetailsModal({ customer, onClose }) {
           <div className="flex gap-3">
             <Sparkles className="mt-0.5 h-5 w-5 shrink-0 text-indigo-600" />
             <p className="text-sm leading-6 text-slate-700">
-              If payment remains pending this week, send a reminder to recover{' '}
-              {formatCurrency(customer.pendingAmount)}.
+              {customer.pendingAmount > 0
+                ? `Follow up to recover ${formatCurrency(customer.pendingAmount)} and improve cash flow.`
+                : 'This customer has no dues. Keep them engaged with regular offers.'}
             </p>
           </div>
         </div>
@@ -650,7 +670,7 @@ function ReminderModal({ customer, onClose }) {
   );
 }
 
-function DeleteConfirmModal({ customer, onCancel, onConfirm }) {
+function DeleteConfirmModal({ customer, isDeleting, onCancel, onConfirm }) {
   return (
     <ModalShell onClose={onCancel} size="max-w-md">
       <div className="p-5 sm:p-6">
@@ -661,14 +681,14 @@ function DeleteConfirmModal({ customer, onCancel, onConfirm }) {
           Delete this customer record?
         </h2>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          {customer.name} will be removed from this local customer list. No
-          backend data is touched.
+          {customer.name} will be removed from your Appwrite customer ledger.
+          This only affects your authenticated workspace.
         </p>
         <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
           <Button onClick={onCancel} rounded="2xl" variant="secondary">
             Cancel
           </Button>
-          <Button onClick={onConfirm} rounded="2xl" variant="danger">
+          <Button loading={isDeleting} onClick={onConfirm} rounded="2xl" variant="danger">
             Delete Customer
           </Button>
         </div>
@@ -696,14 +716,117 @@ function EmptyState({ onClear }) {
   );
 }
 
+function FirstTimeEmptyState({ isSeeding, onAddCustomer, onSeedDemo }) {
+  return (
+    <Card className="text-center" padding="lg">
+      <div className="mx-auto grid h-16 w-16 place-items-center rounded-3xl bg-indigo-50 text-indigo-600">
+        <Users className="h-8 w-8" />
+      </div>
+      <h2 className="mt-5 text-2xl font-black text-slate-950">
+        No customers yet
+      </h2>
+      <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-500">
+        Add your first customer to track purchases, dues, and payment reminders.
+      </p>
+      <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
+        <Button onClick={onAddCustomer}>
+          <UserPlus className="h-4 w-4" />
+          Add Customer
+        </Button>
+        <Button loading={isSeeding} onClick={onSeedDemo} variant="secondary">
+          Load Demo Customers
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+function CustomersLoadingState() {
+  return (
+    <Card padding="lg">
+      <div className="flex flex-col items-center justify-center py-8 text-center">
+        <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
+        <h2 className="mt-4 text-xl font-black text-slate-950">
+          Loading customers
+        </h2>
+        <p className="mt-2 text-sm text-slate-500">
+          Fetching customer records from your Appwrite workspace...
+        </p>
+      </div>
+    </Card>
+  );
+}
+
 export default function CustomersPage() {
-  const [customers, setCustomers] = useState(mockCustomers);
+  const { user } = useAuth();
+  const [customers, setCustomers] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSeeding, setIsSeeding] = useState(false);
+  const [mutationLoading, setMutationLoading] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
+  const [formError, setFormError] = useState('');
   const [filters, setFilters] = useState({
     search: '',
     paymentStatus: 'All Customers',
     sortBy: 'Latest',
   });
   const [modalState, setModalState] = useState({ type: null, customer: null });
+
+  const showSuccess = useCallback((message) => {
+    setSuccessMessage(message);
+    window.setTimeout(() => setSuccessMessage(''), 2800);
+  }, []);
+
+  const loadCustomers = useCallback(
+    async ({ refreshing = false } = {}) => {
+      if (!user?.$id) return;
+
+      setErrorMessage('');
+      if (refreshing) {
+        setIsRefreshing(true);
+      } else {
+        setIsLoading(true);
+      }
+
+      try {
+        setCustomers(await listCustomers(user.$id));
+      } catch (error) {
+        setErrorMessage(error.message);
+      } finally {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
+    },
+    [user?.$id],
+  );
+
+  useEffect(() => {
+    loadCustomers();
+  }, [loadCustomers]);
+
+  const customerStats = useMemo(() => getCustomerStats(customers), [customers]);
+
+  const customerAiInsight = useMemo(() => {
+    const pendingCustomers = customers.filter(
+      (customer) => Number(customer.pendingAmount || 0) > 0,
+    );
+
+    if (!customers.length) {
+      return 'Add customers and MSME Pilot will start tracking dues and follow-up priorities.';
+    }
+
+    if (!pendingCustomers.length) {
+      return 'Customer dues are clear. Focus on repeat purchases and loyalty.';
+    }
+
+    const highestPending = [...pendingCustomers].sort(
+      (a, b) => b.pendingAmount - a.pendingAmount,
+    )[0];
+
+    return `${highestPending.name} has the highest pending amount. Follow up this week to improve cash flow.`;
+  }, [customers]);
 
   const filteredCustomers = useMemo(() => {
     const searchTerm = filters.search.trim().toLowerCase();
@@ -712,8 +835,8 @@ export default function CustomersPage() {
       const matchesSearch =
         !searchTerm ||
         customer.name.toLowerCase().includes(searchTerm) ||
-        customer.phone.toLowerCase().includes(searchTerm) ||
-        customer.address.toLowerCase().includes(searchTerm);
+        String(customer.phone || '').toLowerCase().includes(searchTerm) ||
+        String(customer.address || '').toLowerCase().includes(searchTerm);
       const matchesStatus =
         filters.paymentStatus === 'All Customers' ||
         status === filters.paymentStatus;
@@ -734,7 +857,7 @@ export default function CustomersPage() {
         return a.name.localeCompare(b.name);
       }
 
-      return new Date(b.createdAt) - new Date(a.createdAt);
+      return new Date(b.createdAt || b.$createdAt) - new Date(a.createdAt || a.$createdAt);
     });
   }, [customers, filters]);
 
@@ -751,24 +874,109 @@ export default function CustomersPage() {
     });
   }
 
-  function saveCustomer(customer) {
-    setCustomers((current) => {
-      const exists = current.some((item) => item.id === customer.id);
-
-      if (exists) {
-        return current.map((item) => (item.id === customer.id ? customer : item));
-      }
-
-      return [customer, ...current];
-    });
-    setModalState({ type: null, customer: null });
+  function openCustomerModal(type, customer = null) {
+    setFormError('');
+    setModalState({ type, customer });
   }
 
-  function confirmDelete() {
-    setCustomers((current) =>
-      current.filter((customer) => customer.id !== modalState.customer.id),
+  async function saveCustomer(customer) {
+    if (!user?.$id) {
+      setFormError('You must be logged in to manage customers.');
+      return;
+    }
+
+    setMutationLoading(true);
+    setFormError('');
+    setErrorMessage('');
+
+    try {
+      if (modalState.type === 'edit') {
+        const updatedCustomer = await updateCustomer(user.$id, modalState.customer.id, customer);
+        setCustomers((current) =>
+          current.map((item) => (item.id === updatedCustomer.id ? updatedCustomer : item)),
+        );
+        showSuccess('Customer updated successfully.');
+      } else {
+        const createdCustomer = await createCustomer(user.$id, customer);
+        setCustomers((current) => [createdCustomer, ...current]);
+        showSuccess('Customer added successfully.');
+      }
+
+      setModalState({ type: null, customer: null });
+    } catch (error) {
+      setFormError(error.message);
+    } finally {
+      setMutationLoading(false);
+    }
+  }
+
+  async function confirmDelete() {
+    if (!user?.$id || !modalState.customer) return;
+
+    setMutationLoading(true);
+    setErrorMessage('');
+
+    try {
+      await deleteCustomer(user.$id, modalState.customer.id);
+      setCustomers((current) =>
+        current.filter((customer) => customer.id !== modalState.customer.id),
+      );
+      setModalState({ type: null, customer: null });
+      showSuccess('Customer deleted successfully.');
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setMutationLoading(false);
+    }
+  }
+
+  async function seedDemoCustomers() {
+    if (!user?.$id) {
+      setErrorMessage('You must be logged in to seed demo customers.');
+      return;
+    }
+
+    if (
+      customers.length > 0 &&
+      !window.confirm('You already have customers. Add demo customers anyway?')
+    ) {
+      return;
+    }
+
+    const existingKeys = new Set(
+      customers.flatMap((customer) => [
+        String(customer.phone || '').toLowerCase(),
+        String(customer.name || '').toLowerCase(),
+      ]),
     );
-    setModalState({ type: null, customer: null });
+    const seedCustomers = mockCustomers.filter(
+      (customer) =>
+        !existingKeys.has(String(customer.phone || '').toLowerCase()) &&
+        !existingKeys.has(String(customer.name || '').toLowerCase()),
+    );
+
+    if (!seedCustomers.length) {
+      showSuccess('Demo customers already exist in this ledger.');
+      return;
+    }
+
+    setIsSeeding(true);
+    setErrorMessage('');
+
+    try {
+      const createdCustomers = [];
+
+      for (const customer of seedCustomers) {
+        createdCustomers.push(await createCustomer(user.$id, customer));
+      }
+
+      setCustomers((current) => [...createdCustomers, ...current]);
+      showSuccess(`${createdCustomers.length} demo customers added successfully.`);
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setIsSeeding(false);
+    }
   }
 
   return (
@@ -776,11 +984,19 @@ export default function CustomersPage() {
       <SectionHeader
         action={
           <div className="flex flex-col gap-3 sm:flex-row">
+            <Button
+              loading={isRefreshing}
+              onClick={() => loadCustomers({ refreshing: true })}
+              variant="secondary"
+            >
+              <RefreshCw className="h-4 w-4" />
+              Refresh
+            </Button>
             <Button variant="secondary">
               <Send className="h-4 w-4" />
               Export
             </Button>
-            <Button onClick={() => setModalState({ type: 'add', customer: null })}>
+            <Button onClick={() => openCustomerModal('add')}>
               <UserPlus className="h-4 w-4" />
               Add Customer
             </Button>
@@ -790,34 +1006,60 @@ export default function CustomersPage() {
         title="Customers"
       />
 
+      <AnimatePresence>
+        {successMessage ? (
+          <motion.div
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            initial={{ opacity: 0, y: -8 }}
+          >
+            <Card className="border-emerald-100 bg-emerald-50/90" padding="sm">
+              <div className="flex items-center gap-3 text-sm font-bold text-emerald-700">
+                <UserCheck className="h-4 w-4" />
+                {successMessage}
+              </div>
+            </Card>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+
+      {errorMessage ? (
+        <Card className="border-rose-100 bg-rose-50/90" padding="sm">
+          <div className="flex items-start gap-3 text-sm font-semibold text-rose-700">
+            <WalletCards className="mt-0.5 h-4 w-4 shrink-0" />
+            <p>{errorMessage}</p>
+          </div>
+        </Card>
+      ) : null}
+
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           icon={Users}
           status="info"
           title="Total Customers"
           trend="Across your active ledger"
-          value="124"
+          value={customerStats.totalCustomers}
         />
         <StatCard
           icon={WalletCards}
           status="warning"
           title="Pending Amount"
           trend="Needs follow-up"
-          value="₹42,500"
+          value={formatCurrency(customerStats.pendingAmountTotal)}
         />
         <StatCard
           icon={UserCheck}
           status="success"
           title="Active Customers"
           trend="Purchased recently"
-          value="89"
+          value={customerStats.activeCustomers}
         />
         <StatCard
           icon={UserPlus}
           status="neutral"
           title="New This Month"
           trend="Growing customer base"
-          value="16"
+          value={customerStats.newThisMonth}
         />
       </section>
 
@@ -831,8 +1073,7 @@ export default function CustomersPage() {
               AI Insight
             </Badge>
             <p className="mt-3 max-w-3xl text-lg font-bold leading-7 text-white">
-              Ahmed Traders has the highest pending amount. Follow up this week
-              to improve cash flow.
+              {customerAiInsight}
             </p>
           </div>
           <Button variant="secondary">
@@ -855,24 +1096,32 @@ export default function CustomersPage() {
           <div>
             <h2 className="text-xl font-black text-slate-950">Customer Ledger</h2>
             <p className="mt-1 text-sm text-slate-500">
-              Showing {filteredCustomers.length} of {customers.length} local demo customers.
+              Showing {filteredCustomers.length} of {customers.length} Appwrite customers.
             </p>
           </div>
           <div className="flex items-center gap-2 text-sm font-semibold text-slate-500">
             <UserRoundX className="h-4 w-4 text-indigo-500" />
-            Local CRM data only
+            Per-user Appwrite data
           </div>
         </div>
       </Card>
 
-      {filteredCustomers.length ? (
+      {isLoading ? (
+        <CustomersLoadingState />
+      ) : !customers.length ? (
+        <FirstTimeEmptyState
+          isSeeding={isSeeding}
+          onAddCustomer={() => openCustomerModal('add')}
+          onSeedDemo={seedDemoCustomers}
+        />
+      ) : filteredCustomers.length ? (
         <>
           <CustomerTable
             customers={filteredCustomers}
-            onDelete={(customer) => setModalState({ type: 'delete', customer })}
-            onEdit={(customer) => setModalState({ type: 'edit', customer })}
-            onRemind={(customer) => setModalState({ type: 'remind', customer })}
-            onView={(customer) => setModalState({ type: 'view', customer })}
+            onDelete={(customer) => openCustomerModal('delete', customer)}
+            onEdit={(customer) => openCustomerModal('edit', customer)}
+            onRemind={(customer) => openCustomerModal('remind', customer)}
+            onView={(customer) => openCustomerModal('view', customer)}
           />
           <div className="grid gap-4 xl:hidden">
             {filteredCustomers.map((customer) => (
@@ -880,16 +1129,16 @@ export default function CustomersPage() {
                 customer={customer}
                 key={customer.id}
                 onDelete={(selectedCustomer) =>
-                  setModalState({ type: 'delete', customer: selectedCustomer })
+                  openCustomerModal('delete', selectedCustomer)
                 }
                 onEdit={(selectedCustomer) =>
-                  setModalState({ type: 'edit', customer: selectedCustomer })
+                  openCustomerModal('edit', selectedCustomer)
                 }
                 onRemind={(selectedCustomer) =>
-                  setModalState({ type: 'remind', customer: selectedCustomer })
+                  openCustomerModal('remind', selectedCustomer)
                 }
                 onView={(selectedCustomer) =>
-                  setModalState({ type: 'view', customer: selectedCustomer })
+                  openCustomerModal('view', selectedCustomer)
                 }
               />
             ))}
@@ -902,6 +1151,8 @@ export default function CustomersPage() {
       {modalState.type === 'add' || modalState.type === 'edit' ? (
         <CustomerModal
           customer={modalState.customer}
+          formError={formError}
+          isSaving={mutationLoading}
           mode={modalState.type}
           onClose={() => setModalState({ type: null, customer: null })}
           onSave={saveCustomer}
@@ -925,6 +1176,7 @@ export default function CustomersPage() {
       {modalState.type === 'delete' && modalState.customer ? (
         <DeleteConfirmModal
           customer={modalState.customer}
+          isDeleting={mutationLoading}
           onCancel={() => setModalState({ type: null, customer: null })}
           onConfirm={confirmDelete}
         />

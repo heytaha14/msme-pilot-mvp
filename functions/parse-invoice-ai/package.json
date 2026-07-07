@@ -1,0 +1,16 @@
+{
+  "name": "parse-invoice-ai",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "node src/main.js",
+    "check": "node -e \"import('./src/invoiceSchema.js').then(() => import('./src/parseOpenAIResponse.js')).then(() => console.log('Function modules loaded'))\""
+  },
+  "dependencies": {
+    "node-appwrite": "^26.2.0",
+    "openai": "^6.10.0",
+    "zod": "^4.1.13"
+  }
+}

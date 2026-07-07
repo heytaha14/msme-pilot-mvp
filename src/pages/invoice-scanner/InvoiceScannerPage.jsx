@@ -9,6 +9,7 @@ import {
   FileScan,
   FileText,
   FileUp,
+  Info,
   PackageCheck,
   Pencil,
   RefreshCw,
@@ -21,24 +22,45 @@ import {
   WandSparkles,
   X,
 } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Badge from '../../components/common/Badge.jsx';
 import Button from '../../components/common/Button.jsx';
 import Card from '../../components/common/Card.jsx';
 import Input from '../../components/common/Input.jsx';
 import SectionHeader from '../../components/common/SectionHeader.jsx';
 import StatCard from '../../components/common/StatCard.jsx';
+import { useAuth } from '../../context/AuthContext.jsx';
 import {
-  mockExtractedInvoice,
-  recentScannedInvoices,
-  scanSteps,
-} from '../../data/mockData.js';
+  deleteInvoiceFile,
+  uploadInvoiceFile,
+} from '../../services/invoiceStorageService.js';
+import { parseInvoiceWithAi } from '../../services/aiInvoiceService.js';
+import { extractTextFromImage, isOcrSupportedFile } from '../../services/ocrService.js';
+import {
+  approvePurchaseInvoice,
+  createInvoiceItem,
+  createPurchaseInvoice,
+  deletePurchaseInvoice,
+  deleteInvoiceItemsForInvoice,
+  getPurchaseInvoiceWithItems,
+  listPurchaseInvoices,
+  updatePurchaseInvoice,
+} from '../../services/purchaseInvoiceService.js';
 import {
   formatCurrency,
   formatDate,
+  formatDuration,
   formatFileSize,
+  getAiConfidenceBadge,
+  getAiConfidenceLevel,
+  getAiReviewStatusBadge,
   getInvoiceScanStatusBadge,
+  getOcrConfidenceBadge,
+  getOcrConfidenceLevel,
 } from '../../utils/formatters.js';
+import { getAiSourceLabel } from '../../utils/aiErrors.js';
+import { parseInvoiceText } from '../../utils/invoiceTextParser.js';
 
 const initialScanState = {
   status: 'idle',
@@ -48,8 +70,116 @@ const initialScanState = {
   successMessage: '',
 };
 
-function cloneExtractedInvoice() {
-  return JSON.parse(JSON.stringify(mockExtractedInvoice));
+const initialOcrMeta = {
+  engineStatus: 'Waiting',
+  currentStep: '',
+  progress: 0,
+  durationMs: 0,
+  confidence: null,
+};
+
+const ocrScanSteps = [
+  'Uploading invoice',
+  'Preparing OCR engine',
+  'Reading invoice image',
+  'Extracting text',
+  'Parsing invoice fields',
+  'Ready for review',
+];
+
+function todayInputDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function scanStepIndexForProgress(progress = 0) {
+  if (progress < 15) return 1;
+  if (progress < 55) return 2;
+  if (progress < 90) return 3;
+  return 4;
+}
+
+function toRecentScan(invoice) {
+  return {
+    id: invoice.id,
+    supplier: invoice.supplierName,
+    invoiceNumber: invoice.invoiceNumber,
+    amount: invoice.totalAmount,
+    itemsCount: invoice.itemCount || invoice.items?.length || 0,
+    status: invoice.status,
+    date: invoice.invoiceDate,
+    invoice,
+  };
+}
+
+function toScannerInvoice(invoice) {
+  if (!invoice) return null;
+  let metadata = {};
+
+  try {
+    metadata = invoice.aiExtractedJson ? JSON.parse(invoice.aiExtractedJson) : {};
+  } catch {
+    metadata = {};
+  }
+  const aiResult = metadata.aiResult || {};
+  const aiInvoice = aiResult.invoice || {};
+  const aiSupplier = aiResult.supplier || {};
+  const aiConfidence = aiResult.confidence?.overall;
+
+  return {
+    ...invoice,
+    ocrText: invoice.extractedText || invoice.ocrText || '',
+    status: invoice.status || 'Pending Review',
+    supplierName: invoice.supplierName || aiSupplier.name || 'Unknown Supplier',
+    supplierPhone: invoice.supplierPhone || aiSupplier.phone || '',
+    invoiceNumber: invoice.invoiceNumber || aiInvoice.invoiceNumber || '',
+    confidence: metadata.confidence ?? aiConfidence ?? null,
+    aiConfidence: aiConfidence ?? null,
+    needsManualReview: Boolean(aiResult.needsManualReview),
+    warnings: aiResult.warnings || metadata.warnings || [],
+    parsedAt: metadata.parsedAt || '',
+    ocrSource: metadata.source || '',
+    aiModel: metadata.model || '',
+    deterministicChecks: metadata.deterministicChecks || null,
+    items: (invoice.items || []).map((item) => ({
+      ...item,
+      currentStock: item.currentStock ?? '-',
+      newStock: item.newStock ?? '-',
+      inventoryAction: item.inventoryAction || `Increase stock by ${item.quantity}`,
+    })),
+  };
+}
+
+function buildScannerInvoiceFromParsed(parsed, ocrText, ocrResult, status = 'Pending Review') {
+  return {
+    supplierName: parsed.supplierName,
+    supplierPhone: parsed.supplierPhone,
+    invoiceNumber: parsed.invoiceNumber,
+    invoiceDate: parsed.invoiceDate,
+    subtotal: parsed.subtotal,
+    gstAmount: parsed.gstAmount,
+    totalAmount: parsed.totalAmount,
+    status,
+    ocrText,
+    confidence: ocrResult?.confidence ?? null,
+    durationMs: ocrResult?.durationMs || 0,
+    warnings: parsed.warnings || [],
+    parsedAt: new Date().toISOString(),
+    ocrSource: 'tesseract_local_ocr',
+    items: parsed.items || [],
+  };
+}
+
+function buildOcrMetadata(parsed, ocrResult, extra = {}) {
+  return {
+    source: 'tesseract_local_ocr',
+    parser: 'local_rule_based_parser',
+    confidence: ocrResult?.confidence ?? null,
+    durationMs: ocrResult?.durationMs || 0,
+    warnings: parsed?.warnings || [],
+    parsedAt: new Date().toISOString(),
+    parsedData: parsed || {},
+    ...extra,
+  };
 }
 
 function ModalShell({ children, onClose, size = 'max-w-xl' }) {
@@ -94,7 +224,7 @@ function InvoiceUploadCard({ file, onFileChange, onStartScan, scanState }) {
           Drop invoice image here
         </h2>
         <p className="mt-2 max-w-md text-sm leading-6 text-slate-500">
-          Supports JPG, PNG, PDF preview style for now.
+          Supports JPG, PNG, WEBP, and PDF. OCR works best with JPG, PNG, or WEBP.
         </p>
 
         <input
@@ -110,7 +240,7 @@ function InvoiceUploadCard({ file, onFileChange, onStartScan, scanState }) {
         </Button>
 
         <p className="mt-4 text-xs font-semibold text-slate-400">
-          Demo mode: OCR and AI extraction are simulated locally.
+          OCR runs locally in your browser. AI parsing comes in Prompt 24.
         </p>
       </div>
 
@@ -144,14 +274,14 @@ function InvoiceUploadCard({ file, onFileChange, onStartScan, scanState }) {
   );
 }
 
-function ScanProgressCard({ scanState }) {
+function ScanProgressCard({ ocrMeta = {}, scanState }) {
   return (
     <Card>
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-xl font-black text-slate-950">Mock scan process</h2>
+          <h2 className="text-xl font-black text-slate-950">OCR scan process</h2>
           <p className="mt-1 text-sm text-slate-500">
-            Demo mode: extraction is simulated locally. Real OCR + AI integration comes next.
+            OCR may take a few seconds depending on image quality.
           </p>
         </div>
         <Badge variant={getInvoiceScanStatusBadge(scanState.status)}>
@@ -167,8 +297,14 @@ function ScanProgressCard({ scanState }) {
         />
       </div>
 
+      {ocrMeta.currentStep ? (
+        <p className="mt-3 text-sm font-semibold text-slate-600">
+          {ocrMeta.currentStep} {ocrMeta.progress ? `- ${ocrMeta.progress}%` : ''}
+        </p>
+      ) : null}
+
       <div className="mt-5 space-y-3">
-        {scanSteps.map((step, index) => {
+        {ocrScanSteps.map((step, index) => {
           const isCompleted = index < scanState.stepIndex || scanState.status === 'extracted' || scanState.status === 'approved';
           const isProcessing = index === scanState.stepIndex && scanState.status === 'processing';
           return (
@@ -272,24 +408,142 @@ function OcrTextPanel({ invoice }) {
   );
 }
 
+function OcrStatusCard({ invoice, ocrMeta }) {
+  return (
+    <Card>
+      <div className="flex items-start gap-3">
+        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-cyan-50 text-cyan-600">
+          <FileScan className="h-5 w-5" />
+        </div>
+        <div className="flex-1">
+          <h2 className="text-xl font-black text-slate-950">OCR status</h2>
+          <p className="mt-1 text-sm text-slate-500">
+            Tesseract.js runs locally in this browser. No OCR text is sent to AI.
+          </p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {[
+              ['Engine status', ocrMeta.engineStatus || (invoice ? 'Completed' : 'Waiting')],
+              ['Current step', ocrMeta.currentStep || 'Ready'],
+              ['Progress', `${scanPercent(ocrMeta.progress)}%`],
+              ['Time taken', invoice?.durationMs ? formatDuration(invoice.durationMs) : 'Not available'],
+              [
+                'Confidence',
+                invoice?.confidence !== null && invoice?.confidence !== undefined
+                  ? `${Math.round(invoice.confidence)}%`
+                  : 'Not available',
+              ],
+            ].map(([label, value]) => (
+              <div className="rounded-2xl bg-slate-50 p-3" key={label}>
+                <p className="text-xs font-bold uppercase tracking-wide text-slate-400">{label}</p>
+                <p className="mt-1 font-black text-slate-950">{value}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function scanPercent(value) {
+  return Math.max(0, Math.min(100, Number(value || 0)));
+}
+
+function OcrQualityCard({ invoice }) {
+  if (!invoice) return null;
+
+  return (
+    <Card>
+      <div className="flex items-start gap-3">
+        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-indigo-50 text-indigo-600">
+          <Info className="h-5 w-5" />
+        </div>
+        <div>
+          <h2 className="text-xl font-black text-slate-950">OCR result quality</h2>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Badge variant={getOcrConfidenceBadge(invoice.confidence)}>
+              {getOcrConfidenceLevel(invoice.confidence)}
+            </Badge>
+            {invoice.parsedAt ? <Badge>Parsed {formatDate(invoice.parsedAt)}</Badge> : null}
+          </div>
+          <p className="mt-3 text-sm leading-6 text-slate-500">
+            Always review OCR results before approving inventory updates.
+          </p>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function OcrWarningsCard({ warnings = [] }) {
+  if (!warnings.length) return null;
+
+  return (
+    <Card>
+      <div className="flex items-start gap-3">
+        <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-amber-50 text-amber-600">
+          <CircleAlert className="h-5 w-5" />
+        </div>
+        <div>
+          <h2 className="text-xl font-black text-slate-950">Please review these fields</h2>
+          <ul className="mt-3 space-y-2 text-sm font-semibold text-slate-600">
+            {warnings.map((warning) => (
+              <li key={warning}>{warning}</li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function AiExtractionPanel({ invoice }) {
   if (!invoice) {
     return null;
   }
+  const isAiParsed = invoice.ocrSource === 'openai_appwrite_function';
 
   return (
     <Card>
       <div className="flex items-start justify-between gap-4">
         <div>
           <h2 className="text-xl font-black text-slate-950">
-            AI structured extraction
+            {isAiParsed ? 'AI Extracted Data' : 'OCR Parser'}
           </h2>
           <p className="mt-1 text-sm text-slate-500">
-            Supplier, invoice, GST, and item details parsed for review.
+            {isAiParsed
+              ? 'Parsed securely by the Appwrite Function. Review before approval.'
+              : 'Local rule-based parsing. Run AI extraction for stronger structured review.'}
           </p>
         </div>
-        <Badge variant="info">{invoice.status}</Badge>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Badge variant="info">{invoice.status}</Badge>
+          {isAiParsed ? (
+            <Badge variant={getAiReviewStatusBadge(invoice.needsManualReview)}>
+              {invoice.needsManualReview ? 'Needs Review' : 'Ready for Review'}
+            </Badge>
+          ) : null}
+        </div>
       </div>
+
+      {isAiParsed ? (
+        <div className="mt-5 grid gap-3 rounded-3xl bg-indigo-50 p-4 sm:grid-cols-3">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide text-indigo-400">Source</p>
+            <p className="mt-1 text-sm font-black text-slate-950">{getAiSourceLabel(invoice.ocrSource)}</p>
+          </div>
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide text-indigo-400">Model</p>
+            <p className="mt-1 text-sm font-black text-slate-950">{invoice.aiModel || 'Configured model'}</p>
+          </div>
+          <div>
+            <p className="text-xs font-bold uppercase tracking-wide text-indigo-400">Confidence</p>
+            <Badge className="mt-1" variant={getAiConfidenceBadge(invoice.aiConfidence)}>
+              {getAiConfidenceLevel(invoice.aiConfidence)}
+            </Badge>
+          </div>
+        </div>
+      ) : null}
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         {[
@@ -312,7 +566,7 @@ function AiExtractionPanel({ invoice }) {
       </div>
 
       <div className="mt-5 space-y-3">
-        {invoice.items.map((item) => (
+        {invoice.items.length ? invoice.items.map((item) => (
           <div
             className="rounded-3xl border border-slate-100 bg-white p-4"
             key={item.productName}
@@ -334,7 +588,11 @@ function AiExtractionPanel({ invoice }) {
               </div>
             </div>
           </div>
-        ))}
+        )) : (
+          <div className="rounded-3xl border border-amber-100 bg-amber-50 p-4 text-sm font-semibold text-amber-700">
+            No line items detected. Add or edit items during review.
+          </div>
+        )}
       </div>
     </Card>
   );
@@ -353,16 +611,16 @@ function InventoryUpdatePreview({ invoice }) {
         </div>
         <div>
           <h2 className="text-xl font-black text-slate-950">
-            Inventory Update Preview
+            Simulated inventory update preview
           </h2>
           <p className="mt-1 text-sm text-slate-500">
-            3 products will be updated after approval.
+            {invoice.items.length || 0} parsed products can be reviewed before automation.
           </p>
         </div>
       </div>
 
       <div className="mt-5 space-y-3">
-        {invoice.items.map((item) => (
+        {invoice.items.length ? invoice.items.map((item) => (
           <div
             className="flex items-center justify-between gap-4 rounded-2xl bg-slate-50 p-4"
             key={item.productName}
@@ -373,7 +631,11 @@ function InventoryUpdatePreview({ invoice }) {
               <Badge variant="success">New Stock {item.newStock}</Badge>
             </div>
           </div>
-        ))}
+        )) : (
+          <p className="rounded-2xl bg-amber-50 p-4 text-sm font-semibold text-amber-700">
+            No inventory line items were detected by OCR. Add items during review.
+          </p>
+        )}
       </div>
     </Card>
   );
@@ -414,7 +676,9 @@ function SupplierUpdatePreview({ invoice }) {
 }
 
 function ReviewActions({
+  actionLoading,
   invoice,
+  onAiParse,
   onApprove,
   onDiscard,
   onEdit,
@@ -435,7 +699,19 @@ function ReviewActions({
       <div className="flex flex-col gap-3 sm:flex-row">
         <Button
           className="w-full sm:w-auto"
+          disabled={!invoice.ocrText || invoice.status === 'Approved'}
+          loading={actionLoading === 'ai-parse'}
+          onClick={onAiParse}
+          rounded="2xl"
+          variant="secondary"
+        >
+          <Sparkles className="h-4 w-4" />
+          Parse with AI
+        </Button>
+        <Button
+          className="w-full sm:w-auto"
           disabled={scanState.status === 'approved'}
+          loading={actionLoading === 'approve'}
           onClick={onApprove}
           rounded="2xl"
         >
@@ -589,8 +865,13 @@ function RecentScansTable({ onDelete, onReview, onView, scans }) {
 function ExtractionEditModal({ invoice, onClose, onSave }) {
   const [values, setValues] = useState({
     supplierName: invoice.supplierName,
+    supplierPhone: invoice.supplierPhone || '',
     invoiceNumber: invoice.invoiceNumber,
+    invoiceDate: invoice.invoiceDate,
+    subtotal: String(invoice.subtotal || 0),
+    gstAmount: String(invoice.gstAmount || 0),
     totalAmount: String(invoice.totalAmount),
+    status: invoice.status || 'Pending Review',
     items: invoice.items.map((item) => ({ ...item })),
   });
 
@@ -614,13 +895,56 @@ function ExtractionEditModal({ invoice, onClose, onSave }) {
     }));
   }
 
+  function updateItem(index, field, value) {
+    setValues((current) => ({
+      ...current,
+      items: current.items.map((item, itemIndex) =>
+        itemIndex === index ? { ...item, [field]: value } : item,
+      ),
+    }));
+  }
+
+  function addItem() {
+    setValues((current) => ({
+      ...current,
+      items: [
+        ...current.items,
+        {
+          productName: '',
+          quantity: '',
+          unit: '',
+          amount: '',
+          gstPercentage: '',
+          inventoryAction: 'Review inventory action',
+        },
+      ],
+    }));
+  }
+
+  function removeItem(index) {
+    setValues((current) => ({
+      ...current,
+      items: current.items.filter((_, itemIndex) => itemIndex !== index),
+    }));
+  }
+
   function handleSave() {
     onSave({
       ...invoice,
       supplierName: values.supplierName,
+      supplierPhone: values.supplierPhone,
       invoiceNumber: values.invoiceNumber,
+      invoiceDate: values.invoiceDate,
+      subtotal: Number(values.subtotal),
+      gstAmount: Number(values.gstAmount),
       totalAmount: Number(values.totalAmount),
-      items: values.items,
+      status: values.status,
+      items: values.items.map((item) => ({
+        ...item,
+        quantity: Number(item.quantity || 0),
+        amount: Number(item.amount || 0),
+        gstPercentage: Number(item.gstPercentage || 0),
+      })),
     });
   }
 
@@ -652,10 +976,37 @@ function ExtractionEditModal({ invoice, onClose, onSave }) {
             value={values.supplierName}
           />
           <Input
+            label="Supplier phone"
+            name="supplierPhone"
+            onChange={updateField}
+            value={values.supplierPhone}
+          />
+          <Input
             label="Invoice number"
             name="invoiceNumber"
             onChange={updateField}
             value={values.invoiceNumber}
+          />
+          <Input
+            label="Invoice date"
+            name="invoiceDate"
+            onChange={updateField}
+            type="date"
+            value={values.invoiceDate}
+          />
+          <Input
+            label="Subtotal"
+            name="subtotal"
+            onChange={updateField}
+            type="number"
+            value={values.subtotal}
+          />
+          <Input
+            label="GST amount"
+            name="gstAmount"
+            onChange={updateField}
+            type="number"
+            value={values.gstAmount}
           />
           <Input
             label="Total amount"
@@ -664,17 +1015,66 @@ function ExtractionEditModal({ invoice, onClose, onSave }) {
             type="number"
             value={values.totalAmount}
           />
+          <SelectControl
+            label="Status"
+            name="status"
+            onChange={updateField}
+            value={values.status}
+          >
+            {['Uploaded', 'Pending Review', 'Processing', 'Approved', 'Failed OCR', 'Rejected'].map((status) => (
+              <option key={status}>{status}</option>
+            ))}
+          </SelectControl>
         </div>
 
         <div className="mt-5 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="font-black text-slate-950">Line items</p>
+            <Button onClick={addItem} size="sm" variant="secondary">
+              Add Item
+            </Button>
+          </div>
           {values.items.map((item, index) => (
-            <Input
-              key={item.productName}
-              label={`${item.productName} quantity`}
-              name={`quantity-${index}`}
-              onChange={(event) => updateQuantity(index, event.target.value)}
-              value={item.quantity}
-            />
+            <div className="rounded-3xl bg-slate-50 p-4" key={`${item.productName}-${index}`}>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Input
+                  label="Product name"
+                  name={`productName-${index}`}
+                  onChange={(event) => updateItem(index, 'productName', event.target.value)}
+                  value={item.productName}
+                />
+                <Input
+                  label="Quantity"
+                  name={`quantity-${index}`}
+                  onChange={(event) => updateQuantity(index, event.target.value)}
+                  type="number"
+                  value={String(item.quantity)}
+                />
+                <Input
+                  label="Unit"
+                  name={`unit-${index}`}
+                  onChange={(event) => updateItem(index, 'unit', event.target.value)}
+                  value={item.unit || ''}
+                />
+                <Input
+                  label="Amount"
+                  name={`amount-${index}`}
+                  onChange={(event) => updateItem(index, 'amount', event.target.value)}
+                  type="number"
+                  value={String(item.amount || '')}
+                />
+                <Input
+                  label="GST %"
+                  name={`gst-${index}`}
+                  onChange={(event) => updateItem(index, 'gstPercentage', event.target.value)}
+                  type="number"
+                  value={String(item.gstPercentage || '')}
+                />
+                <Button onClick={() => removeItem(index)} rounded="2xl" variant="danger">
+                  Remove
+                </Button>
+              </div>
+            </div>
           ))}
         </div>
 
@@ -717,13 +1117,63 @@ function ConfirmDiscardModal({ onCancel, onConfirm }) {
   );
 }
 
+function OcrTipsCard() {
+  const tips = [
+    'Use a clear invoice photo.',
+    'Avoid shadows and blur.',
+    'Keep invoice flat.',
+    'Crop unnecessary background.',
+    'Make sure totals and item names are visible.',
+  ];
+
+  return (
+    <Card>
+      <h2 className="text-xl font-black text-slate-950">Tips for better OCR</h2>
+      <ul className="mt-4 space-y-2 text-sm font-semibold text-slate-600">
+        {tips.map((tip) => (
+          <li className="flex gap-2" key={tip}>
+            <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+            {tip}
+          </li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 export default function InvoiceScannerPage() {
+  const { user } = useAuth();
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
   const [scanState, setScanState] = useState(initialScanState);
+  const [ocrMeta, setOcrMeta] = useState(initialOcrMeta);
   const [extractedInvoice, setExtractedInvoice] = useState(null);
-  const [recentScans, setRecentScans] = useState(recentScannedInvoices);
+  const [savedInvoice, setSavedInvoice] = useState(null);
+  const [recentScans, setRecentScans] = useState([]);
+  const [loadingScans, setLoadingScans] = useState(true);
+  const [actionLoading, setActionLoading] = useState('');
   const [modalState, setModalState] = useState({ type: null, scan: null });
+
+  const loadRecentScans = useCallback(async () => {
+    if (!user?.$id) return;
+
+    setLoadingScans(true);
+    try {
+      const invoices = await listPurchaseInvoices(user.$id);
+      setRecentScans(invoices.map(toRecentScan));
+    } catch (error) {
+      setScanState((current) => ({
+        ...current,
+        error: error.message || 'Could not load recent scanned invoices.',
+      }));
+    } finally {
+      setLoadingScans(false);
+    }
+  }, [user?.$id]);
+
+  useEffect(() => {
+    loadRecentScans();
+  }, [loadRecentScans]);
 
   useEffect(() => {
     if (!selectedFile || !selectedFile.type.startsWith('image/')) {
@@ -745,6 +1195,8 @@ export default function InvoiceScannerPage() {
 
     setSelectedFile(file);
     setExtractedInvoice(null);
+    setSavedInvoice(null);
+    setOcrMeta(initialOcrMeta);
     setScanState({
       ...initialScanState,
       status: 'ready',
@@ -753,6 +1205,14 @@ export default function InvoiceScannerPage() {
   }
 
   async function startScan() {
+    if (!user?.$id) {
+      setScanState((current) => ({
+        ...current,
+        error: 'Please login before scanning invoices.',
+      }));
+      return;
+    }
+
     if (!selectedFile) {
       setScanState((current) => ({
         ...current,
@@ -761,7 +1221,15 @@ export default function InvoiceScannerPage() {
       return;
     }
 
+    let uploadedFile = null;
     setExtractedInvoice(null);
+    setSavedInvoice(null);
+    setOcrMeta({
+      ...initialOcrMeta,
+      engineStatus: 'Preparing',
+      currentStep: 'Uploading invoice',
+      progress: 0,
+    });
     setScanState({
       status: 'processing',
       stepIndex: 0,
@@ -770,51 +1238,338 @@ export default function InvoiceScannerPage() {
       successMessage: '',
     });
 
-    for (let index = 0; index < scanSteps.length; index += 1) {
-      await new Promise((resolve) => {
-        window.setTimeout(resolve, 520);
+    try {
+      setActionLoading('upload');
+      uploadedFile = await uploadInvoiceFile(user.$id, selectedFile);
+      setScanState((current) => ({
+        ...current,
+        stepIndex: 1,
+        progress: 18,
+      }));
+      setOcrMeta((current) => ({
+        ...current,
+        engineStatus: 'Uploaded',
+        currentStep: 'Preparing OCR engine',
+        progress: 18,
+      }));
+
+      if (!isOcrSupportedFile(selectedFile)) {
+        const parsed = {
+          supplierName: 'Unknown Supplier',
+          supplierPhone: '',
+          invoiceNumber: '',
+          invoiceDate: todayInputDate(),
+          subtotal: 0,
+          gstAmount: 0,
+          totalAmount: 0,
+          confidence: null,
+          warnings: [
+            'PDF OCR is not enabled in the browser yet. Upload JPG, PNG, or WEBP for OCR extraction.',
+          ],
+          items: [],
+        };
+        const metadata = buildOcrMetadata(parsed, null, {
+          source: 'upload_only_pdf',
+          fileName: selectedFile.name,
+        });
+        const createdInvoice = await createPurchaseInvoice(
+          user.$id,
+          {
+            supplierName: parsed.supplierName,
+            supplierPhone: '',
+            invoiceDate: parsed.invoiceDate,
+            subtotal: 0,
+            gstAmount: 0,
+            totalAmount: 0,
+            status: 'Uploaded',
+            inventoryUpdated: false,
+            extractedText: '',
+            aiExtractedJson: JSON.stringify(metadata),
+            fileId: uploadedFile.$id,
+            fileName: uploadedFile.name || selectedFile.name,
+            fileType: uploadedFile.mimeType || selectedFile.type,
+          },
+          [],
+        );
+
+        const scannerInvoice = {
+          ...buildScannerInvoiceFromParsed(parsed, '', null, 'Uploaded'),
+          id: createdInvoice.id,
+          invoiceNumber: createdInvoice.invoiceNumber,
+          fileId: uploadedFile.$id,
+          fileName: uploadedFile.name || selectedFile.name,
+          fileType: uploadedFile.mimeType || selectedFile.type,
+          warnings: parsed.warnings,
+          ocrSource: 'upload_only_pdf',
+        };
+
+        setSavedInvoice(createdInvoice);
+        setExtractedInvoice(scannerInvoice);
+        setScanState({
+          status: 'uploaded',
+          stepIndex: 1,
+          progress: 100,
+          error: '',
+          successMessage:
+            'Invoice file uploaded and saved. Browser OCR currently supports JPG, PNG, and WEBP images.',
+        });
+        setOcrMeta({
+          ...initialOcrMeta,
+          engineStatus: 'Upload saved',
+          currentStep: 'PDF saved for manual review',
+          progress: 100,
+        });
+        await loadRecentScans();
+        return;
+      }
+
+      const ocrResult = await extractTextFromImage(selectedFile, {
+        onProgress: ({ status, step, progress }) => {
+          const normalizedProgress = Math.max(18, Math.min(94, progress));
+          setOcrMeta((current) => ({
+            ...current,
+            engineStatus: status,
+            currentStep: step,
+            progress: normalizedProgress,
+          }));
+          setScanState((current) => ({
+            ...current,
+            stepIndex: scanStepIndexForProgress(normalizedProgress),
+            progress: normalizedProgress,
+            error: '',
+          }));
+        },
+      });
+
+      setOcrMeta((current) => ({
+        ...current,
+        engineStatus: 'Parsing',
+        currentStep: 'Parsing invoice fields',
+        progress: 96,
+        durationMs: ocrResult.durationMs,
+        confidence: ocrResult.confidence,
+      }));
+      setScanState((current) => ({
+        ...current,
+        stepIndex: 4,
+        progress: 96,
+      }));
+
+      const parsedInvoice = parseInvoiceText(ocrResult.normalizedText);
+      parsedInvoice.confidence = ocrResult.confidence;
+      const scannerInvoice = buildScannerInvoiceFromParsed(
+        parsedInvoice,
+        ocrResult.normalizedText,
+        ocrResult,
+        'Pending Review',
+      );
+      const metadata = buildOcrMetadata(parsedInvoice, ocrResult);
+      const createdInvoice = await createPurchaseInvoice(
+        user.$id,
+        {
+          supplierName: parsedInvoice.supplierName,
+          supplierPhone: parsedInvoice.supplierPhone,
+          invoiceNumber: parsedInvoice.invoiceNumber,
+          invoiceDate: parsedInvoice.invoiceDate,
+          subtotal: parsedInvoice.subtotal,
+          gstAmount: parsedInvoice.gstAmount,
+          totalAmount: parsedInvoice.totalAmount,
+          status: 'Pending Review',
+          inventoryUpdated: false,
+          extractedText: ocrResult.normalizedText,
+          aiExtractedJson: JSON.stringify(metadata),
+          fileId: uploadedFile.$id,
+          fileName: uploadedFile.name || selectedFile.name,
+          fileType: uploadedFile.mimeType || selectedFile.type,
+        },
+        parsedInvoice.items,
+      );
+
+      setSavedInvoice(createdInvoice);
+      setExtractedInvoice({
+        ...scannerInvoice,
+        id: createdInvoice.id,
+        invoiceNumber: createdInvoice.invoiceNumber,
+        status: 'Pending Review',
+        fileId: uploadedFile.$id,
+        fileName: uploadedFile.name || selectedFile.name,
+        fileType: uploadedFile.mimeType || selectedFile.type,
       });
       setScanState({
-        status: index === scanSteps.length - 1 ? 'extracted' : 'processing',
-        stepIndex: index,
-        progress: Math.round(((index + 1) / scanSteps.length) * 100),
+        status: 'extracted',
+        stepIndex: ocrScanSteps.length - 1,
+        progress: 100,
         error: '',
-        successMessage: '',
+        successMessage: 'Invoice uploaded and saved for review in Appwrite.',
       });
-    }
+      setOcrMeta({
+        engineStatus: 'Completed',
+        currentStep: 'Ready for review',
+        progress: 100,
+        durationMs: ocrResult.durationMs,
+        confidence: ocrResult.confidence,
+      });
+      await loadRecentScans();
+    } catch (error) {
+      if (uploadedFile?.$id && selectedFile) {
+        try {
+          const parsed = {
+            supplierName: 'Unknown Supplier',
+            supplierPhone: '',
+            invoiceNumber: '',
+            invoiceDate: todayInputDate(),
+            subtotal: 0,
+            gstAmount: 0,
+            totalAmount: 0,
+            confidence: null,
+            warnings: [error.message || 'OCR failed. Manual review is required.'],
+            items: [],
+          };
+          const metadata = buildOcrMetadata(parsed, null, {
+            source: 'tesseract_local_ocr_failed',
+            error: error.message || 'OCR failed.',
+          });
+          const failedInvoice = await createPurchaseInvoice(
+            user.$id,
+            {
+              supplierName: parsed.supplierName,
+              invoiceDate: parsed.invoiceDate,
+              subtotal: 0,
+              gstAmount: 0,
+              totalAmount: 0,
+              status: 'Failed OCR',
+              inventoryUpdated: false,
+              extractedText: '',
+              aiExtractedJson: JSON.stringify(metadata),
+              fileId: uploadedFile.$id,
+              fileName: uploadedFile.name || selectedFile.name,
+              fileType: uploadedFile.mimeType || selectedFile.type,
+            },
+            [],
+          );
 
-    setExtractedInvoice(cloneExtractedInvoice());
+          setSavedInvoice(failedInvoice);
+          setExtractedInvoice({
+            ...buildScannerInvoiceFromParsed(parsed, '', null, 'Failed OCR'),
+            id: failedInvoice.id,
+            invoiceNumber: failedInvoice.invoiceNumber,
+            fileId: uploadedFile.$id,
+            fileName: uploadedFile.name || selectedFile.name,
+            fileType: uploadedFile.mimeType || selectedFile.type,
+            ocrSource: 'tesseract_local_ocr_failed',
+          });
+          await loadRecentScans();
+        } catch {
+          try {
+            await deleteInvoiceFile(uploadedFile.$id);
+          } catch {
+            // Storage cleanup is best-effort when the invoice record could not be saved.
+          }
+        }
+      }
+
+      setScanState((current) => ({
+        ...current,
+        status: uploadedFile ? 'failed' : 'ready',
+        error: error.message || 'Could not upload, OCR, or save invoice record.',
+      }));
+      setOcrMeta((current) => ({
+        ...current,
+        engineStatus: 'Failed',
+        currentStep: 'OCR needs manual review',
+      }));
+    } finally {
+      setActionLoading('');
+    }
   }
 
-  function approveScan() {
-    if (!extractedInvoice) {
+  async function approveScan() {
+    if (!extractedInvoice || !savedInvoice || !user?.$id) {
       return;
     }
 
-    setRecentScans((current) => [
-      {
-        id: Date.now(),
-        supplier: extractedInvoice.supplierName,
-        invoiceNumber: extractedInvoice.invoiceNumber,
-        amount: extractedInvoice.totalAmount,
-        itemsCount: extractedInvoice.items.length,
-        status: 'Approved',
-        date: extractedInvoice.invoiceDate,
-      },
-      ...current,
-    ]);
-    setScanState((current) => ({
-      ...current,
-      status: 'approved',
-      successMessage:
-        'Invoice approved. Inventory, supplier, dashboard, and notification updates are simulated.',
-    }));
+    setActionLoading('approve');
+    try {
+      const approvedInvoice = await approvePurchaseInvoice(user.$id, savedInvoice.id);
+      setSavedInvoice(approvedInvoice);
+      setExtractedInvoice((current) => ({ ...current, status: 'Approved' }));
+      setScanState((current) => ({
+        ...current,
+        status: 'approved',
+        successMessage:
+          'Invoice approved and saved. Inventory update automation comes after OCR/AI integration.',
+      }));
+      await loadRecentScans();
+    } catch (error) {
+      setScanState((current) => ({
+        ...current,
+        error: error.message || 'Could not approve invoice.',
+      }));
+    } finally {
+      setActionLoading('');
+    }
   }
 
-  function resetScanner() {
+  async function parseCurrentInvoiceWithAi() {
+    const invoiceId = savedInvoice?.id || extractedInvoice?.id;
+    if (!user?.$id || !invoiceId) {
+      setScanState((current) => ({
+        ...current,
+        error: 'Save an OCR invoice before running AI extraction.',
+      }));
+      return;
+    }
+
+    setActionLoading('ai-parse');
+    setScanState((current) => ({
+      ...current,
+      error: '',
+      successMessage: 'AI is understanding supplier, GST, totals, and items...',
+    }));
+
+    try {
+      const result = await parseInvoiceWithAi(invoiceId);
+      const refreshedInvoice = await getPurchaseInvoiceWithItems(user.$id, invoiceId);
+      setSavedInvoice(refreshedInvoice);
+      setExtractedInvoice(toScannerInvoice(refreshedInvoice));
+      setScanState((current) => ({
+        ...current,
+        status: 'extracted',
+        successMessage: result.needsManualReview
+          ? 'AI extraction completed but needs manual review.'
+          : 'AI extraction completed. Please review before approval.',
+      }));
+      await loadRecentScans();
+    } catch (error) {
+      setScanState((current) => ({
+        ...current,
+        error: error.message || 'AI parser unavailable. Using local OCR parser for now.',
+        successMessage: '',
+      }));
+    } finally {
+      setActionLoading('');
+    }
+  }
+
+  async function resetScanner() {
+    if (savedInvoice && savedInvoice.status !== 'Approved' && user?.$id) {
+      try {
+        await deletePurchaseInvoice(user.$id, savedInvoice.id, { deleteFile: true });
+        await loadRecentScans();
+      } catch (error) {
+        setScanState((current) => ({
+          ...current,
+          error: error.message || 'Could not discard uploaded invoice.',
+        }));
+        return;
+      }
+    }
+
     setSelectedFile(null);
     setExtractedInvoice(null);
+    setSavedInvoice(null);
     setScanState(initialScanState);
+    setOcrMeta(initialOcrMeta);
     setModalState({ type: null, scan: null });
   }
 
@@ -823,7 +1578,7 @@ export default function InvoiceScannerPage() {
       <SectionHeader
         action={
           <div className="flex flex-col gap-3 sm:flex-row">
-            <Button variant="secondary">
+            <Button as={Link} to="/invoices" variant="secondary">
               <FileText className="h-4 w-4" />
               View Invoices
             </Button>
@@ -842,22 +1597,22 @@ export default function InvoiceScannerPage() {
           icon={FileScan}
           status="info"
           title="Invoices Scanned"
-          trend="All-time demo scans"
-          value="128"
+          trend="Saved in Appwrite"
+          value={String(recentScans.length)}
         />
         <StatCard
           icon={RefreshCw}
           status="success"
           title="Auto Updates"
-          trend="Inventory workflows"
-          value="96"
+          trend="Automation coming next"
+          value={String(recentScans.filter((scan) => scan.invoice?.inventoryUpdated).length)}
         />
         <StatCard
           icon={CircleAlert}
           status="warning"
           title="Pending Review"
           trend="Need owner approval"
-          value="5"
+          value={String(recentScans.filter((scan) => scan.status === 'Pending Review').length)}
         />
         <StatCard
           icon={TimerReset}
@@ -897,12 +1652,13 @@ export default function InvoiceScannerPage() {
             onStartScan={startScan}
             scanState={scanState}
           />
-          <ScanProgressCard scanState={scanState} />
+          <ScanProgressCard ocrMeta={ocrMeta} scanState={scanState} />
           <InvoicePreviewCard
             file={selectedFile}
             previewUrl={previewUrl}
             scanState={scanState}
           />
+          <OcrTipsCard />
         </div>
 
         <div className="space-y-6">
@@ -913,11 +1669,14 @@ export default function InvoiceScannerPage() {
                 Start by uploading a supplier invoice
               </h2>
               <p className="mt-2 text-sm leading-6 text-slate-500">
-                MSME Pilot will simulate OCR and AI extraction in this demo.
+                MSME Pilot will run local OCR for image invoices and save results for review.
               </p>
             </Card>
           ) : null}
 
+          <OcrStatusCard invoice={extractedInvoice} ocrMeta={ocrMeta} />
+          <OcrQualityCard invoice={extractedInvoice} />
+          <OcrWarningsCard warnings={extractedInvoice?.warnings || []} />
           <OcrTextPanel invoice={extractedInvoice} />
           <AiExtractionPanel invoice={extractedInvoice} />
           <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-1">
@@ -925,7 +1684,9 @@ export default function InvoiceScannerPage() {
             <SupplierUpdatePreview invoice={extractedInvoice} />
           </div>
           <ReviewActions
+            actionLoading={actionLoading}
             invoice={extractedInvoice}
+            onAiParse={parseCurrentInvoiceWithAi}
             onApprove={approveScan}
             onDiscard={() => setModalState({ type: 'discard', scan: null })}
             onEdit={() => setModalState({ type: 'edit', scan: null })}
@@ -936,25 +1697,78 @@ export default function InvoiceScannerPage() {
 
       <section className="space-y-4">
         <SectionHeader
-          subtitle="Recent local scan history for demo review workflows."
+          subtitle="Recent scanned invoices saved in Appwrite for review workflows."
           title="Recent Scanned Invoices"
         />
-        <RecentScansTable
-          onDelete={(scan) =>
-            setRecentScans((current) => current.filter((item) => item.id !== scan.id))
-          }
-          onReview={() => setExtractedInvoice(cloneExtractedInvoice())}
-          onView={() => setExtractedInvoice(cloneExtractedInvoice())}
-          scans={recentScans}
-        />
+        {loadingScans ? (
+          <Card className="text-center" padding="lg">
+            <Clock className="mx-auto h-10 w-10 animate-pulse text-indigo-500" />
+            <p className="mt-4 font-black text-slate-950">Loading scanned invoices...</p>
+          </Card>
+        ) : (
+          <RecentScansTable
+            onDelete={async (scan) => {
+              if (!user?.$id) return;
+              try {
+                await deletePurchaseInvoice(user.$id, scan.id, { deleteFile: false });
+                await loadRecentScans();
+              } catch (error) {
+                setScanState((current) => ({
+                  ...current,
+                  error: error.message || 'Could not delete invoice.',
+                }));
+              }
+            }}
+            onReview={(scan) => {
+              setSavedInvoice(scan.invoice);
+              setExtractedInvoice(toScannerInvoice(scan.invoice));
+            }}
+            onView={(scan) => {
+              setSavedInvoice(scan.invoice);
+              setExtractedInvoice(toScannerInvoice(scan.invoice));
+            }}
+            scans={recentScans}
+          />
+        )}
       </section>
 
       {modalState.type === 'edit' && extractedInvoice ? (
         <ExtractionEditModal
           invoice={extractedInvoice}
           onClose={() => setModalState({ type: null, scan: null })}
-          onSave={(invoice) => {
+          onSave={async (invoice) => {
             setExtractedInvoice(invoice);
+            if (savedInvoice && user?.$id) {
+              try {
+                const updatedInvoice = await updatePurchaseInvoice(user.$id, savedInvoice.id, {
+                  supplierName: invoice.supplierName,
+                  supplierPhone: invoice.supplierPhone,
+                  invoiceNumber: invoice.invoiceNumber,
+                  invoiceDate: invoice.invoiceDate,
+                  subtotal: invoice.subtotal,
+                  gstAmount: invoice.gstAmount,
+                  totalAmount: invoice.totalAmount,
+                  status: invoice.status,
+                  aiExtractedJson: JSON.stringify(buildOcrMetadata(invoice, {
+                    confidence: invoice.confidence,
+                    durationMs: invoice.durationMs,
+                  }, { source: invoice.ocrSource || 'local_manual_review' })),
+                });
+                await deleteInvoiceItemsForInvoice(user.$id, savedInvoice.id);
+                await Promise.all(
+                  invoice.items
+                    .filter((item) => item.productName)
+                    .map((item) => createInvoiceItem(user.$id, savedInvoice.id, item)),
+                );
+                setSavedInvoice(updatedInvoice);
+                await loadRecentScans();
+              } catch (error) {
+                setScanState((current) => ({
+                  ...current,
+                  error: error.message || 'Could not save extracted invoice changes.',
+                }));
+              }
+            }
             setModalState({ type: null, scan: null });
           }}
         />

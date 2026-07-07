@@ -17,12 +17,40 @@ export function mapAppwriteError(error, fallbackMessage = 'Something went wrong.
     return 'Required Appwrite collection is missing. Run the Appwrite schema setup first.';
   }
 
+  if (
+    code === 404 &&
+    (
+      lowerMessage.includes('generated_reports') ||
+      lowerMessage.includes('sale_items') ||
+      lowerMessage.includes('invoice_items') ||
+      lowerMessage.includes('purchase_invoices')
+    )
+  ) {
+    return 'A report data collection is missing. Run the Appwrite schema setup before generating real reports.';
+  }
+
+  if (lowerMessage.includes('bucket') && code === 404) {
+    return 'Required Appwrite storage bucket is missing. Run the Appwrite schema setup first.';
+  }
+
   if (lowerMessage.includes('attribute') || lowerMessage.includes('document_invalid_structure')) {
     return 'Appwrite document structure does not match the schema. Check collection attributes.';
   }
 
   if (lowerMessage.includes('index')) {
     return 'Required Appwrite index is missing. Run the Appwrite schema setup first.';
+  }
+
+  if (lowerMessage.includes('not enough stock') || lowerMessage.includes('insufficient stock')) {
+    return message || 'Not enough stock for this product.';
+  }
+
+  if (lowerMessage.includes('unsupported file type')) {
+    return 'Unsupported file type. Please upload JPG, PNG, WEBP, or PDF.';
+  }
+
+  if (lowerMessage.includes('file is too large') || lowerMessage.includes('maximum size')) {
+    return 'File is too large. Maximum size is 10MB.';
   }
 
   if (lowerMessage.includes('network') || lowerMessage.includes('failed to fetch')) {
