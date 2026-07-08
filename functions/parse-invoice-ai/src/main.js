@@ -29,6 +29,15 @@ const SYSTEM_PROMPT = [
   'Include warnings for uncertain or missing fields.',
 ].join(' ');
 
+const OPENROUTER_TIMEOUT_MS = Math.min(
+  Math.max(Number(process.env.OPENROUTER_TIMEOUT_MS || 6000), 1000),
+  10000,
+);
+const OPENROUTER_MAX_MODELS = Math.min(
+  Math.max(Number(process.env.OPENROUTER_MAX_MODELS || 1), 1),
+  3,
+);
+
 function json(res, payload, status = 200) {
   return res.json(payload, status);
 }
@@ -218,6 +227,8 @@ function createOpenRouterClient() {
   return new OpenAI({
     apiKey: getOpenRouterKey(),
     baseURL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
+    timeout: OPENROUTER_TIMEOUT_MS,
+    maxRetries: 0,
     defaultHeaders: {
       'HTTP-Referer': process.env.OPENROUTER_SITE_URL || 'http://localhost',
       'X-OpenRouter-Title': process.env.OPENROUTER_APP_NAME || 'MSME Pilot',
@@ -238,7 +249,7 @@ async function createAiResponse(openrouter, invoice, model, correctionText = '')
     model,
     messages,
     temperature: 0.1,
-    max_tokens: 2200,
+    max_tokens: 1200,
   };
 
   if (process.env.OPENROUTER_USE_RESPONSE_FORMAT === 'true') {
@@ -267,7 +278,10 @@ async function parseWithOpenRouter(invoice) {
     } catch (error) {
       lastError = error;
 
-      if (error?.code === 'AI_VALIDATION_FAILED' || error?.code === 'AI_INVALID_JSON') {
+      if (
+        (error?.code === 'AI_VALIDATION_FAILED' || error?.code === 'AI_INVALID_JSON') &&
+        !String(error?.message || '').toLowerCase().includes('timeout')
+      ) {
         try {
           const retryResponse = await createAiResponse(openrouter, invoice, model, error.message);
           return {
@@ -300,7 +314,8 @@ function getOpenRouterModelCandidates() {
     'cohere/north-mini-code:free',
   ];
 
-  return [...new Set([configured, ...fallbackModels, ...currentFreeDefaults].filter(Boolean))];
+  return [...new Set([configured, ...fallbackModels, ...currentFreeDefaults].filter(Boolean))]
+    .slice(0, OPENROUTER_MAX_MODELS);
 }
 
 function isRetryableOpenRouterError(error) {
