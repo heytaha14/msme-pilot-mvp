@@ -495,16 +495,49 @@ function getOcrMetadata(invoice) {
   }
 }
 
-function InvoiceDetailsModal({ invoice, onClose }) {
+function isImageFileType(fileType = '') {
+  const normalized = String(fileType || '').toLowerCase();
+  return (
+    normalized.startsWith('image/') ||
+    ['png', 'jpg', 'jpeg', 'webp'].includes(normalized)
+  );
+}
+
+function InvoiceFilePreview({ src }) {
+  const [failed, setFailed] = useState(false);
+
+  if (!src || failed) {
+    return (
+      <div className="mt-6 rounded-3xl border border-slate-100 bg-slate-50 p-5 text-sm font-semibold text-slate-500">
+        Private file preview is unavailable in the browser. Use Open File or Download.
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-6 overflow-hidden rounded-3xl border border-slate-100 bg-slate-50">
+      <img
+        alt="Invoice file preview"
+        className="max-h-80 w-full object-contain"
+        onError={() => setFailed(true)}
+        src={src}
+      />
+    </div>
+  );
+}
+
+function InvoiceDetailsModal({ actionLoading, invoice, onAiParse, onApprove, onClose }) {
   const ocrMetadata = getOcrMetadata(invoice);
   const aiResult = ocrMetadata.aiResult;
   const aiConfidence = aiResult?.confidence?.overall;
   const fileViewUrl = invoice.fileId ? getInvoiceFileView(invoice.fileId) : '';
   const filePreviewUrl =
-    invoice.fileId && invoice.fileType?.startsWith('image/')
+    invoice.fileId && isImageFileType(invoice.fileType)
       ? getInvoiceFilePreview(invoice.fileId)
       : '';
   const downloadUrl = invoice.fileId ? getInvoiceFileDownload(invoice.fileId) : '';
+  const canApprove = invoice.status !== 'Approved' && !invoice.inventoryUpdated;
+  const canAiParse = Boolean(invoice.extractedText) && !invoice.inventoryUpdated && invoice.status !== 'Approved';
 
   return (
     <ModalShell onClose={onClose} size="max-w-3xl">
@@ -549,13 +582,25 @@ function InvoiceDetailsModal({ invoice, onClose }) {
           </button>
         </div>
 
-        {filePreviewUrl ? (
-          <div className="mt-6 overflow-hidden rounded-3xl border border-slate-100 bg-slate-50">
-            <img alt="Invoice file preview" className="max-h-80 w-full object-contain" src={filePreviewUrl} />
-          </div>
-        ) : null}
+        {invoice.fileId ? <InvoiceFilePreview src={filePreviewUrl} /> : null}
 
         <div className="mt-6 flex flex-wrap gap-3">
+          {canAiParse ? (
+            <Button
+              loading={actionLoading === `ai-${invoice.id}`}
+              onClick={() => onAiParse(invoice)}
+              variant="secondary"
+            >
+              <Sparkles className="h-4 w-4" />
+              Run AI Parse
+            </Button>
+          ) : null}
+          {canApprove ? (
+            <Button onClick={() => onApprove(invoice)}>
+              <CheckCircle2 className="h-4 w-4" />
+              Approve Invoice
+            </Button>
+          ) : null}
           {fileViewUrl ? (
             <Button as="a" href={fileViewUrl} rel="noreferrer" target="_blank" variant="secondary">
               <Eye className="h-4 w-4" />
@@ -852,7 +897,7 @@ function InvoiceReviewModal({ invoice, loading, onClose, onSave }) {
   );
 }
 
-function ApproveInvoiceModal({ invoice, loading, onCancel, onConfirm }) {
+function ApproveInvoiceModal({ errorMessage, invoice, loading, onCancel, onConfirm }) {
   return (
     <ModalShell onClose={onCancel} size="max-w-md">
       <div className="p-5 sm:p-6">
@@ -865,6 +910,11 @@ function ApproveInvoiceModal({ invoice, loading, onCancel, onConfirm }) {
         <p className="mt-2 text-sm leading-6 text-slate-500">
           This will mark {invoice.invoiceNumber} as approved, increase inventory stock, and update the supplier ledger.
         </p>
+        {errorMessage ? (
+          <div className="mt-5 rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm font-semibold leading-6 text-rose-700">
+            {errorMessage}
+          </div>
+        ) : null}
         <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
           <Button onClick={onCancel} rounded="2xl" variant="secondary">Cancel</Button>
           <Button loading={loading} onClick={onConfirm} rounded="2xl">Approve Invoice</Button>
@@ -1200,10 +1250,12 @@ export default function InvoicesPage() {
       const approved = await approvePurchaseInvoice(user.$id, modalState.invoice.id);
       const result = approved.inventoryUpdateResult;
       setFeedback({
-        message: result
-          ? `Invoice approved. ${result.updatedCount} products updated and ${result.createdCount} products created.`
-          : 'Invoice approved and inventory updated.',
-        tone: 'success',
+        message: approved.supplierUpdateWarning
+          ? `Invoice approved. ${result?.updatedCount || 0} products updated and ${result?.createdCount || 0} products created. Supplier warning: ${approved.supplierUpdateWarning}`
+          : result
+            ? `Invoice approved. ${result.updatedCount} products updated and ${result.createdCount} products created.`
+            : 'Invoice approved and inventory updated.',
+        tone: approved.supplierUpdateWarning ? 'warning' : 'success',
       });
       setModalState({ type: null, invoice: null });
       await loadInvoices();
@@ -1311,7 +1363,10 @@ export default function InvoicesPage() {
             actionLoading={actionLoading}
             invoices={filteredInvoices}
             onAiParse={parseInvoiceAi}
-            onApprove={(invoice) => setModalState({ type: 'approve', invoice })}
+            onApprove={(invoice) => {
+              setFeedback({ message: '', tone: 'info' });
+              setModalState({ type: 'approve', invoice });
+            }}
             onDelete={(invoice) => setModalState({ type: 'delete', invoice })}
             onReview={(invoice) => setModalState({ type: 'review', invoice })}
             onView={(invoice) => setModalState({ type: 'view', invoice })}
@@ -1323,7 +1378,10 @@ export default function InvoicesPage() {
                 key={invoice.id}
                 actionLoading={actionLoading}
                 onAiParse={parseInvoiceAi}
-                onApprove={(selectedInvoice) => setModalState({ type: 'approve', invoice: selectedInvoice })}
+                onApprove={(selectedInvoice) => {
+                  setFeedback({ message: '', tone: 'info' });
+                  setModalState({ type: 'approve', invoice: selectedInvoice });
+                }}
                 onDelete={(selectedInvoice) => setModalState({ type: 'delete', invoice: selectedInvoice })}
                 onReview={(selectedInvoice) => setModalState({ type: 'review', invoice: selectedInvoice })}
                 onView={(selectedInvoice) => setModalState({ type: 'view', invoice: selectedInvoice })}
@@ -1336,7 +1394,16 @@ export default function InvoicesPage() {
       )}
 
       {modalState.type === 'view' && modalState.invoice ? (
-        <InvoiceDetailsModal invoice={modalState.invoice} onClose={() => setModalState({ type: null, invoice: null })} />
+        <InvoiceDetailsModal
+          actionLoading={actionLoading}
+          invoice={modalState.invoice}
+          onAiParse={parseInvoiceAi}
+          onApprove={(invoice) => {
+            setFeedback({ message: '', tone: 'info' });
+            setModalState({ type: 'approve', invoice });
+          }}
+          onClose={() => setModalState({ type: null, invoice: null })}
+        />
       ) : null}
 
       {modalState.type === 'review' && modalState.invoice ? (
@@ -1350,6 +1417,7 @@ export default function InvoicesPage() {
 
       {modalState.type === 'approve' && modalState.invoice ? (
         <ApproveInvoiceModal
+          errorMessage={feedback.tone === 'danger' ? feedback.message : ''}
           invoice={modalState.invoice}
           loading={actionLoading === 'approve'}
           onCancel={() => setModalState({ type: null, invoice: null })}

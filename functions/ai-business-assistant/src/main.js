@@ -109,8 +109,21 @@ async function askOpenRouter(message, context) {
     try {
       const response = await createAiResponse(openrouter, input, model);
       const text = getCompletionText(response) || getResponseText(response);
+      if (!String(text || '').trim()) {
+        throw Object.assign(new Error('OpenRouter returned token usage but no assistant content.'), {
+          code: 'OPENROUTER_EMPTY_RESPONSE',
+          statusCode: 502,
+        });
+      }
+      const payload = validateAssistantResponse(text);
+      if (!String(payload.answer || '').trim() || payload.answer === 'AI assistant returned an empty response.') {
+        throw Object.assign(new Error('OpenRouter returned an empty answer.'), {
+          code: 'OPENROUTER_EMPTY_ANSWER',
+          statusCode: 502,
+        });
+      }
       return {
-        payload: validateAssistantResponse(text),
+        payload,
         model: response?.model || model,
       };
     } catch (error) {

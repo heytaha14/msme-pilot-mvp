@@ -695,7 +695,16 @@ export async function approvePurchaseInvoice(userId, invoiceId) {
     const existingItems = await listInvoiceItems(userId, invoiceId);
     const items = await recoverInvoiceItemsForApproval(userId, invoice, existingItems);
     const inventoryResult = await applyInvoiceToInventory(userId, invoice, items);
-    const supplier = await applyInvoiceToSupplier(userId, invoice, items);
+    let supplier = null;
+    let supplierUpdateWarning = '';
+
+    try {
+      supplier = await applyInvoiceToSupplier(userId, invoice, items);
+    } catch (supplierError) {
+      supplierUpdateWarning =
+        supplierError?.message ||
+        'Inventory was updated, but supplier ledger update could not be completed.';
+    }
 
     const updatedInvoice = await databases.updateDocument(
       DATABASE_ID,
@@ -713,6 +722,7 @@ export async function approvePurchaseInvoice(userId, invoiceId) {
     return {
       ...refreshed,
       inventoryUpdateResult: inventoryResult,
+      supplierUpdateWarning,
     };
   } catch (error) {
     throw createFriendlyAppwriteError(error, 'Could not approve invoice.');

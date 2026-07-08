@@ -130,6 +130,15 @@ function getLocalAssistantFallback(prompt, context, errorMessage = '') {
   };
 }
 
+function isEmptyAiAnswer(answer) {
+  const normalized = String(answer || '').trim().toLowerCase();
+  return (
+    !normalized ||
+    normalized === 'ai assistant returned an empty response.' ||
+    normalized.includes('returned an empty response')
+  );
+}
+
 function DemoModeNotice() {
   return (
     <div className="rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-700">
@@ -602,6 +611,9 @@ export default function AiAssistantPage() {
 
     try {
       const response = await sendBusinessAiMessage(prompt, { conversationId });
+      if (isEmptyAiAnswer(response.answer)) {
+        throw new Error('AI Assistant returned an empty response.');
+      }
       setConversationId(response.conversationId);
       setMessages((current) => [
         ...current,

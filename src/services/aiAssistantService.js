@@ -102,6 +102,11 @@ function parseHistoryMessage(document) {
   }
 }
 
+function isEmptyAssistantHistoryMessage(message) {
+  const normalized = String(message || '').trim().toLowerCase();
+  return !normalized || normalized.includes('returned an empty response');
+}
+
 export async function listAiConversationHistory(userId, conversationId) {
   if (!userId || !conversationId) return [];
 
@@ -116,14 +121,16 @@ export async function listAiConversationHistory(userId, conversationId) {
     ],
   );
 
-  return response.documents.map((document) => ({
-    id: document.$id,
-    role: document.role,
-    content: parseHistoryMessage(document),
-    saved: Boolean(document.saved),
-    conversationId: document.conversationId,
-    createdAt: document.createdAt || document.$createdAt,
-  }));
+  return response.documents
+    .map((document) => ({
+      id: document.$id,
+      role: document.role,
+      content: parseHistoryMessage(document),
+      saved: Boolean(document.saved),
+      conversationId: document.conversationId,
+      createdAt: document.createdAt || document.$createdAt,
+    }))
+    .filter((message) => message.role !== 'assistant' || !isEmptyAssistantHistoryMessage(message.content));
 }
 
 export async function listAiConversations(userId) {
@@ -141,10 +148,15 @@ export async function listAiConversations(userId) {
 
   const grouped = new Map();
   for (const document of response.documents) {
+    const title = parseHistoryMessage(document).slice(0, 80) || 'Business chat';
+    if (document.role === 'assistant' && isEmptyAssistantHistoryMessage(title)) {
+      continue;
+    }
+
     if (!grouped.has(document.conversationId)) {
       grouped.set(document.conversationId, {
         conversationId: document.conversationId,
-        title: parseHistoryMessage(document).slice(0, 80) || 'Business chat',
+        title,
         role: document.role,
         createdAt: document.createdAt || document.$createdAt,
       });
