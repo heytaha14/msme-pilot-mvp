@@ -31,7 +31,6 @@ import Input from '../../components/common/Input.jsx';
 import SectionHeader from '../../components/common/SectionHeader.jsx';
 import StatCard from '../../components/common/StatCard.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
-import { sales as mockSales } from '../../data/mockData.js';
 import { listCustomers } from '../../services/customerService.js';
 import { listProducts } from '../../services/productService.js';
 import {
@@ -1040,7 +1039,7 @@ function DeleteConfirmModal({ loading, onCancel, onConfirm, sale }) {
   );
 }
 
-function EmptyState({ isInitialEmpty, onClear, onCreate, onSeed, seeding }) {
+function EmptyState({ isInitialEmpty, onClear, onCreate }) {
   return (
     <Card className="text-center" padding="lg">
       <div className="mx-auto grid h-14 w-14 place-items-center rounded-3xl bg-slate-100 text-slate-500">
@@ -1056,15 +1055,10 @@ function EmptyState({ isInitialEmpty, onClear, onCreate, onSeed, seeding }) {
       </p>
       <div className="mt-6 flex flex-col justify-center gap-3 sm:flex-row">
         {isInitialEmpty ? (
-          <>
-            <Button onClick={onCreate}>
-              <Plus className="h-4 w-4" />
-              Create Sale
-            </Button>
-            <Button loading={seeding} onClick={onSeed} variant="secondary">
-              Load Demo Sales
-            </Button>
-          </>
+          <Button onClick={onCreate}>
+            <Plus className="h-4 w-4" />
+            Create Sale
+          </Button>
         ) : (
           <Button onClick={onClear} variant="secondary">
             Clear filters
@@ -1144,7 +1138,6 @@ export default function SalesPage() {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState('');
-  const [seeding, setSeeding] = useState(false);
   const [feedback, setFeedback] = useState({ message: '', tone: 'info' });
   const [filters, setFilters] = useState({
     search: '',
@@ -1291,82 +1284,6 @@ export default function SalesPage() {
     }
   }
 
-  async function seedDemoSales() {
-    if (!user?.$id) return;
-
-    if (!customers.length || !products.length) {
-      setFeedback({
-        message: 'Add demo products and customers first to seed realistic sales.',
-        tone: 'warning',
-      });
-      return;
-    }
-
-    if (sales.length && !window.confirm('You already have sales. Add demo sales anyway?')) {
-      return;
-    }
-
-    setSeeding(true);
-    try {
-      let createdCount = 0;
-      const seeds = mockSales.slice(0, 5);
-
-      for (const demoSale of seeds) {
-        const customer = customers.find((entry) => entry.name === demoSale.customerName);
-        if (!customer) continue;
-
-        const saleItems = demoSale.items
-          .map((item) => {
-            const product = products.find((entry) => entry.productName === item.productName);
-            const availableStock = Number(product?.currentStock ?? product?.stock ?? 0);
-
-            if (!product || availableStock <= 0) return null;
-
-            return {
-              productId: product.id,
-              productName: product.productName,
-              quantity: Math.min(1, availableStock),
-              unit: product.unit || '',
-              sellingPrice: product.sellingPrice,
-              purchasePrice: product.purchasePrice,
-              gstPercentage: product.gstPercentage,
-            };
-          })
-          .filter(Boolean);
-
-        if (!saleItems.length) continue;
-
-        const normalizedItems = saleItems.map(normalizeSaleItem);
-        const totalAmount = calculateSaleTotalAmount(normalizedItems);
-        const paidAmount = demoSale.paymentStatus === 'Paid' ? totalAmount : 0;
-
-        await createSale(user.$id, {
-          customerId: customer.id,
-          customerName: customer.name,
-          customerPhone: customer.phone,
-          saleDate: todayInputDate(),
-          paidAmount,
-          paymentStatus: demoSale.paymentStatus,
-          notes: 'Seeded demo sale',
-          items: saleItems,
-        });
-        createdCount += 1;
-      }
-
-      await loadData();
-      setFeedback({
-        message: createdCount
-          ? `${createdCount} demo sales added successfully.`
-          : 'No demo sales were added because matching products had no stock.',
-        tone: createdCount ? 'success' : 'warning',
-      });
-    } catch (error) {
-      setFeedback({ message: error.message || 'Could not load demo sales.', tone: 'danger' });
-    } finally {
-      setSeeding(false);
-    }
-  }
-
   return (
     <div className="space-y-6">
       <SectionHeader
@@ -1495,8 +1412,6 @@ export default function SalesPage() {
           isInitialEmpty={!sales.length && !hasActiveFilters}
           onClear={clearFilters}
           onCreate={() => setModalState({ type: 'add', sale: null })}
-          onSeed={seedDemoSales}
-          seeding={seeding}
         />
       )}
 

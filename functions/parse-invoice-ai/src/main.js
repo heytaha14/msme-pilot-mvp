@@ -234,13 +234,18 @@ async function createAiResponse(openrouter, invoice, model, correctionText = '')
     });
   }
 
-  return openrouter.chat.completions.create({
+  const request = {
     model,
     messages,
     temperature: 0.1,
     max_tokens: 2200,
-    response_format: { type: 'json_object' },
-  });
+  };
+
+  if (process.env.OPENROUTER_USE_RESPONSE_FORMAT === 'true') {
+    request.response_format = { type: 'json_object' };
+  }
+
+  return openrouter.chat.completions.create(request);
 }
 
 function getCompletionText(response) {
@@ -248,51 +253,100 @@ function getCompletionText(response) {
 }
 
 async function parseWithOpenRouter(invoice) {
-  const model = process.env.OPENROUTER_MODEL || 'openrouter/free';
   const openrouter = createOpenRouterClient();
+  const modelCandidates = getOpenRouterModelCandidates();
+  let lastError = null;
 
-  try {
-    const response = await createAiResponse(openrouter, invoice, model);
-    return {
-      parsed: parseAiInvoiceText(getCompletionText(response)),
-      model: response?.model || model,
-    };
-  } catch (error) {
-    if (error?.code === 'AI_VALIDATION_FAILED' || error?.code === 'AI_INVALID_JSON') {
-      const retryResponse = await createAiResponse(openrouter, invoice, model, error.message);
+  for (const model of modelCandidates) {
+    try {
+      const response = await createAiResponse(openrouter, invoice, model);
       return {
-        parsed: parseAiInvoiceText(getCompletionText(retryResponse)),
-        model: retryResponse?.model || model,
+        parsed: parseAiInvoiceText(getCompletionText(response)),
+        model: response?.model || model,
       };
-    }
+    } catch (error) {
+      lastError = error;
 
-    const message = String(error?.message || '').toLowerCase();
-    if (message.includes('model') || message.includes('not found') || message.includes('does not exist')) {
-      throw Object.assign(
-        new Error('Configured OpenRouter model is unavailable. Set OPENROUTER_MODEL to an enabled model.'),
-        { statusCode: 502, code: 'OPENROUTER_MODEL_UNAVAILABLE' },
-      );
-    }
+      if (error?.code === 'AI_VALIDATION_FAILED' || error?.code === 'AI_INVALID_JSON') {
+        try {
+          const retryResponse = await createAiResponse(openrouter, invoice, model, error.message);
+          return {
+            parsed: parseAiInvoiceText(getCompletionText(retryResponse)),
+            model: retryResponse?.model || model,
+          };
+        } catch (retryError) {
+          lastError = retryError;
+        }
+      }
 
-    if (error?.status === 401 || message.includes('api key')) {
-      throw Object.assign(
-        new Error('OpenRouter authentication failed. Check the function API key.'),
-        { statusCode: 502, code: 'OPENROUTER_AUTH_FAILED' },
-      );
+      if (!isRetryableOpenRouterError(lastError)) {
+        break;
+      }
     }
-
-    if (error?.status === 429 || message.includes('rate limit')) {
-      throw Object.assign(
-        new Error('OpenRouter free model rate limit reached. Try again later.'),
-        { statusCode: 429, code: 'OPENROUTER_RATE_LIMITED' },
-      );
-    }
-
-    throw Object.assign(new Error('AI response could not be validated. Please try again or review manually.'), {
-      statusCode: 502,
-      code: 'AI_PARSE_FAILED',
-    });
   }
+
+  throw mapOpenRouterError(lastError);
+}
+
+function getOpenRouterModelCandidates() {
+  const configured = String(process.env.OPENROUTER_MODEL || '').trim();
+  const fallbackModels = String(process.env.OPENROUTER_FALLBACK_MODELS || '')
+    .split(',')
+    .map((model) => model.trim())
+    .filter(Boolean);
+  const currentFreeDefaults = [
+    'tencent/hy3:free',
+    'poolside/laguna-xs-2.1:free',
+    'cohere/north-mini-code:free',
+  ];
+
+  return [...new Set([configured, ...fallbackModels, ...currentFreeDefaults].filter(Boolean))];
+}
+
+function isRetryableOpenRouterError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  const retryableStatuses = new Set([400, 402, 408, 409, 429, 500, 502, 503, 504, 524, 529]);
+
+  return (
+    retryableStatuses.has(error?.status) ||
+    message.includes('model') ||
+    message.includes('not found') ||
+    message.includes('does not exist') ||
+    message.includes('unavailable') ||
+    message.includes('provider') ||
+    message.includes('rate limit') ||
+    message.includes('json')
+  );
+}
+
+function mapOpenRouterError(error) {
+  const message = String(error?.message || '').toLowerCase();
+
+  if (error?.status === 401 || message.includes('api key')) {
+    return Object.assign(
+      new Error('OpenRouter authentication failed. Check the function API key.'),
+      { statusCode: 502, code: 'OPENROUTER_AUTH_FAILED' },
+    );
+  }
+
+  if (error?.status === 429 || message.includes('rate limit')) {
+    return Object.assign(
+      new Error('OpenRouter free model rate limit reached. Try again later.'),
+      { statusCode: 429, code: 'OPENROUTER_RATE_LIMITED' },
+    );
+  }
+
+  if (message.includes('model') || message.includes('not found') || message.includes('does not exist')) {
+    return Object.assign(
+      new Error('No configured OpenRouter model is currently available. Set OPENROUTER_MODEL to an enabled model.'),
+      { statusCode: 502, code: 'OPENROUTER_MODEL_UNAVAILABLE' },
+    );
+  }
+
+  return Object.assign(new Error('AI response could not be validated. Please try again or review manually.'), {
+    statusCode: 502,
+    code: 'AI_PARSE_FAILED',
+  });
 }
 
 export default async ({ req, res, log, error }) => {

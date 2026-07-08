@@ -16,8 +16,6 @@ import Button from '../../components/common/Button.jsx';
 import Card from '../../components/common/Card.jsx';
 import SectionHeader from '../../components/common/SectionHeader.jsx';
 import {
-  businessMetrics,
-  businessProfile,
   landingFeatures,
   landingTargetUsers,
   problemSolutionItems,
@@ -27,25 +25,25 @@ import {
 const previewStats = [
   {
     label: "Today's Sales",
-    value: businessMetrics.todaySales,
+    value: 'Live after login',
     icon: ReceiptIndianRupee,
     tone: 'bg-emerald-50 text-emerald-600',
   },
   {
     label: 'Business Health',
-    value: businessMetrics.businessHealthScore,
+    value: 'Calculated live',
     icon: Gauge,
     tone: 'bg-indigo-50 text-indigo-600',
   },
   {
     label: 'Inventory',
-    value: `${businessMetrics.totalProducts} Products`,
+    value: 'Your products',
     icon: PackageSearch,
     tone: 'bg-cyan-50 text-cyan-600',
   },
   {
     label: 'Pending Dues',
-    value: businessMetrics.pendingPayments,
+    value: 'Tracked live',
     icon: WalletCards,
     tone: 'bg-rose-50 text-rose-600',
   },
@@ -68,7 +66,7 @@ function DashboardPreview() {
           <div>
             <p className="text-sm font-semibold text-slate-500">Dashboard preview</p>
             <h2 className="mt-1 text-2xl font-black tracking-tight text-slate-950">
-              {businessProfile.businessName}
+              Your Business Dashboard
             </h2>
           </div>
           <Badge variant="success">Strong</Badge>
@@ -97,7 +95,7 @@ function DashboardPreview() {
             <div>
               <p className="text-sm font-bold text-slate-950">AI priority</p>
               <p className="mt-1 text-sm leading-6 text-slate-600">
-                Ahmed Traders has the highest pending amount. Follow up this week.
+                Live reorder, payment, and invoice priorities appear after setup.
               </p>
             </div>
           </div>

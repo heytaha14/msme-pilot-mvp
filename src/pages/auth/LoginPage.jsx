@@ -15,13 +15,19 @@ import Card from '../../components/common/Card.jsx';
 import Input from '../../components/common/Input.jsx';
 import AuthLayout from '../../components/layout/AuthLayout.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
-import { authPreviewMetrics } from '../../data/mockData.js';
 import { isValidEmail } from '../../utils/validators.js';
 
 const initialValues = {
   email: '',
   password: '',
 };
+
+const authPreviewMetrics = [
+  { label: 'Business Health', value: 'Calculated live', icon: ShieldCheck },
+  { label: "Today's Sales", value: 'From sales data', icon: TrendingUp },
+  { label: 'Low Stock', value: 'Tracked live', icon: LockKeyhole },
+  { label: 'Pending Dues', value: 'From customers', icon: Mail },
+];
 
 function LoginBrandPanel() {
   return (
@@ -74,7 +80,7 @@ function LoginBrandPanel() {
             <div>
               <p className="text-sm font-black text-white">AI insight</p>
               <p className="mt-1 text-sm leading-6 text-slate-300">
-                Rice stock is below minimum. Reorder before Friday.
+                Your live inventory, sales, and payment priorities appear here after login.
               </p>
             </div>
           </div>

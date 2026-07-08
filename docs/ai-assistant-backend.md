@@ -29,7 +29,8 @@ VITE_APPWRITE_AI_ASSISTANT_FUNCTION_ID=ai_business_assistant
 
 ```bash
 OPENROUTER_API_KEY=
-OPENROUTER_MODEL=openrouter/free
+OPENROUTER_MODEL=tencent/hy3:free
+OPENROUTER_FALLBACK_MODELS=poolside/laguna-xs-2.1:free,cohere/north-mini-code:free
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_SITE_URL=http://localhost
 OPENROUTER_APP_NAME=MSME Pilot
@@ -39,7 +40,7 @@ APPWRITE_API_KEY=
 APPWRITE_DATABASE_ID=msme_pilot
 ```
 
-`OPENROUTER_MODEL` is configurable so the deployer can change the model without code changes.
+`OPENROUTER_MODEL` is configurable so the deployer can change the model without code changes. If the configured model is unavailable, the function tries `OPENROUTER_FALLBACK_MODELS` and bundled free-model fallbacks.
 
 ## Auth Verification
 
@@ -99,7 +100,7 @@ The function returns:
   "suggestedActions": [],
   "relatedMetrics": [],
   "warnings": [],
-  "model": "openrouter/free",
+  "model": "tencent/hy3:free",
   "savedHistory": true
 }
 ```

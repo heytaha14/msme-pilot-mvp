@@ -1,8 +1,8 @@
 import clsx from 'clsx';
 import { LogOut, Sparkles } from 'lucide-react';
 import { NavLink, useNavigate } from 'react-router-dom';
+import { navItems } from '../../config/navigation.js';
 import { useAuth } from '../../context/AuthContext.jsx';
-import { businessProfile, navItems } from '../../data/mockData.js';
 import Badge from '../common/Badge.jsx';
 import Card from '../common/Card.jsx';
 
@@ -10,9 +10,9 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const { logout, profile, user } = useAuth();
 
-  const businessName = profile?.businessName || businessProfile.businessName;
-  const ownerName = profile?.ownerName || user?.name || businessProfile.userName;
-  const plan = profile?.plan || businessProfile.plan;
+  const businessName = profile?.businessName || 'MSME Pilot';
+  const ownerName = profile?.ownerName || user?.name || user?.email || 'Owner';
+  const plan = profile?.plan || 'Workspace';
   const initial = (ownerName || businessName || 'M').charAt(0).toUpperCase();
 
   async function handleLogout() {
@@ -78,7 +78,7 @@ export default function Sidebar() {
             <div>
               <p className="text-sm font-bold">AI tip</p>
               <p className="mt-1 text-xs leading-5 text-indigo-50">
-                Sugar stock may run out in 3 days based on current sales.
+                Ask the assistant for today&apos;s next best business action.
               </p>
             </div>
           </div>

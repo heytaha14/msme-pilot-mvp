@@ -95,7 +95,7 @@ Delete attempts record:
 New users see a first-time empty state with:
 
 - Add Product
-- Load Demo Products
+- Demo seeding was removed after the real Appwrite CRUD pass. Add products through the Inventory UI or import flow instead.
 
 Demo seed creates the sample Kirana products for the logged-in user with
 per-document permissions and skips products that already match by barcode or

@@ -28,7 +28,6 @@ import Input from '../../components/common/Input.jsx';
 import SectionHeader from '../../components/common/SectionHeader.jsx';
 import StatCard from '../../components/common/StatCard.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
-import { businessProfile, customers as mockCustomers } from '../../data/mockData.js';
 import {
   createCustomer,
   deleteCustomer,
@@ -625,11 +624,11 @@ function CustomerDetailsModal({ customer, onClose }) {
   );
 }
 
-function ReminderModal({ customer, onClose }) {
+function ReminderModal({ businessName, customer, onClose }) {
   const [sent, setSent] = useState(false);
   const message = `Hi ${customer.name}, your pending payment of ${formatCurrency(
     customer.pendingAmount,
-  )} is due. Please clear it at your convenience. Thank you — ${businessProfile.businessName}.`;
+  )} is due. Please clear it at your convenience. Thank you - ${businessName}.`;
 
   return (
     <ModalShell onClose={onClose} size="max-w-lg">
@@ -716,7 +715,7 @@ function EmptyState({ onClear }) {
   );
 }
 
-function FirstTimeEmptyState({ isSeeding, onAddCustomer, onSeedDemo }) {
+function FirstTimeEmptyState({ onAddCustomer }) {
   return (
     <Card className="text-center" padding="lg">
       <div className="mx-auto grid h-16 w-16 place-items-center rounded-3xl bg-indigo-50 text-indigo-600">
@@ -732,9 +731,6 @@ function FirstTimeEmptyState({ isSeeding, onAddCustomer, onSeedDemo }) {
         <Button onClick={onAddCustomer}>
           <UserPlus className="h-4 w-4" />
           Add Customer
-        </Button>
-        <Button loading={isSeeding} onClick={onSeedDemo} variant="secondary">
-          Load Demo Customers
         </Button>
       </div>
     </Card>
@@ -758,11 +754,11 @@ function CustomersLoadingState() {
 }
 
 export default function CustomersPage() {
-  const { user } = useAuth();
+  const { profile, user } = useAuth();
+  const businessName = profile?.businessName || 'your business';
   const [customers, setCustomers] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isSeeding, setIsSeeding] = useState(false);
   const [mutationLoading, setMutationLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -930,55 +926,6 @@ export default function CustomersPage() {
     }
   }
 
-  async function seedDemoCustomers() {
-    if (!user?.$id) {
-      setErrorMessage('You must be logged in to seed demo customers.');
-      return;
-    }
-
-    if (
-      customers.length > 0 &&
-      !window.confirm('You already have customers. Add demo customers anyway?')
-    ) {
-      return;
-    }
-
-    const existingKeys = new Set(
-      customers.flatMap((customer) => [
-        String(customer.phone || '').toLowerCase(),
-        String(customer.name || '').toLowerCase(),
-      ]),
-    );
-    const seedCustomers = mockCustomers.filter(
-      (customer) =>
-        !existingKeys.has(String(customer.phone || '').toLowerCase()) &&
-        !existingKeys.has(String(customer.name || '').toLowerCase()),
-    );
-
-    if (!seedCustomers.length) {
-      showSuccess('Demo customers already exist in this ledger.');
-      return;
-    }
-
-    setIsSeeding(true);
-    setErrorMessage('');
-
-    try {
-      const createdCustomers = [];
-
-      for (const customer of seedCustomers) {
-        createdCustomers.push(await createCustomer(user.$id, customer));
-      }
-
-      setCustomers((current) => [...createdCustomers, ...current]);
-      showSuccess(`${createdCustomers.length} demo customers added successfully.`);
-    } catch (error) {
-      setErrorMessage(error.message);
-    } finally {
-      setIsSeeding(false);
-    }
-  }
-
   return (
     <div className="space-y-6">
       <SectionHeader
@@ -1110,9 +1057,7 @@ export default function CustomersPage() {
         <CustomersLoadingState />
       ) : !customers.length ? (
         <FirstTimeEmptyState
-          isSeeding={isSeeding}
           onAddCustomer={() => openCustomerModal('add')}
-          onSeedDemo={seedDemoCustomers}
         />
       ) : filteredCustomers.length ? (
         <>
@@ -1168,6 +1113,7 @@ export default function CustomersPage() {
 
       {modalState.type === 'remind' && modalState.customer ? (
         <ReminderModal
+          businessName={businessName}
           customer={modalState.customer}
           onClose={() => setModalState({ type: null, customer: null })}
         />

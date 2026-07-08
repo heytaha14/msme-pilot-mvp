@@ -1,6 +1,6 @@
 import clsx from 'clsx';
 import { NavLink } from 'react-router-dom';
-import { mobileNavItems } from '../../data/mockData.js';
+import { mobileNavItems } from '../../config/navigation.js';
 
 export default function MobileNav() {
   return (

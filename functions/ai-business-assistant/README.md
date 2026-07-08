@@ -10,7 +10,8 @@ Function-only variables:
 
 ```bash
 OPENROUTER_API_KEY=
-OPENROUTER_MODEL=openrouter/free
+OPENROUTER_MODEL=tencent/hy3:free
+OPENROUTER_FALLBACK_MODELS=poolside/laguna-xs-2.1:free,cohere/north-mini-code:free
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_SITE_URL=http://localhost
 OPENROUTER_APP_NAME=MSME Pilot
@@ -47,7 +48,7 @@ Never expose `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, or `APPWRITE_API_KEY` in fr
   "suggestedActions": [],
   "relatedMetrics": [],
   "warnings": [],
-  "model": "openrouter/free",
+  "model": "tencent/hy3:free",
   "savedHistory": true
 }
 ```

@@ -30,10 +30,6 @@ import SectionHeader from '../../components/common/SectionHeader.jsx';
 import StatCard from '../../components/common/StatCard.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import {
-  inventoryCategories,
-  inventoryProducts,
-} from '../../data/mockData.js';
-import {
   createProduct,
   deleteProduct,
   getProductStats,
@@ -53,6 +49,16 @@ import {
 
 const stockFilters = ['All Stock', 'In Stock', 'Low Stock', 'Out of Stock'];
 const sortOptions = ['Latest', 'Product Name', 'Stock Low to High', 'Highest Value'];
+const inventoryCategories = [
+  'Grocery',
+  'Household',
+  'Personal Care',
+  'Beverages',
+  'Snacks',
+  'Dairy',
+  'Packaging',
+  'Other',
+];
 
 const emptyProductForm = {
   productName: '',
@@ -695,7 +701,7 @@ function EmptyState({ onClear }) {
   );
 }
 
-function FirstTimeEmptyState({ isSeeding, onAddProduct, onSeedDemo }) {
+function FirstTimeEmptyState({ onAddProduct }) {
   return (
     <Card className="text-center" padding="lg">
       <div className="mx-auto grid h-16 w-16 place-items-center rounded-3xl bg-indigo-50 text-indigo-600">
@@ -709,9 +715,6 @@ function FirstTimeEmptyState({ isSeeding, onAddProduct, onSeedDemo }) {
         <Button onClick={onAddProduct}>
           <PackagePlus className="h-4 w-4" />
           Add Product
-        </Button>
-        <Button loading={isSeeding} onClick={onSeedDemo} variant="secondary">
-          Load Demo Products
         </Button>
       </div>
     </Card>
@@ -739,7 +742,6 @@ export default function InventoryPage() {
   const [products, setProducts] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isSeeding, setIsSeeding] = useState(false);
   const [mutationLoading, setMutationLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -918,61 +920,6 @@ export default function InventoryPage() {
     }
   }
 
-  async function seedDemoProducts() {
-    if (!user?.$id) {
-      setErrorMessage('You must be logged in to seed demo products.');
-      return;
-    }
-
-    if (
-      products.length > 0 &&
-      !window.confirm('You already have products. Add demo products anyway?')
-    ) {
-      return;
-    }
-
-    const existingKeys = new Set(
-      products.flatMap((product) => [
-        String(product.barcode || '').toLowerCase(),
-        String(product.productName || '').toLowerCase(),
-      ]),
-    );
-    const seedProducts = inventoryProducts.filter(
-      (product) =>
-        !existingKeys.has(String(product.barcode || '').toLowerCase()) &&
-        !existingKeys.has(String(product.productName || '').toLowerCase()),
-    );
-
-    if (!seedProducts.length) {
-      showSuccess('Demo products already exist in this inventory.');
-      return;
-    }
-
-    setIsSeeding(true);
-    setErrorMessage('');
-
-    try {
-      const createdProducts = [];
-
-      for (const product of seedProducts) {
-        createdProducts.push(
-          await createProduct(user.$id, {
-            ...product,
-            unit: 'pcs',
-            notes: 'Demo product seeded from MSME Pilot sample data.',
-          }),
-        );
-      }
-
-      setProducts((current) => [...createdProducts, ...current]);
-      showSuccess(`${createdProducts.length} demo products added successfully.`);
-    } catch (error) {
-      setErrorMessage(error.message);
-    } finally {
-      setIsSeeding(false);
-    }
-  }
-
   return (
     <div className="space-y-6">
       <SectionHeader
@@ -1102,9 +1049,7 @@ export default function InventoryPage() {
         <InventoryLoadingState />
       ) : !products.length ? (
         <FirstTimeEmptyState
-          isSeeding={isSeeding}
           onAddProduct={() => openProductModal('add')}
-          onSeedDemo={seedDemoProducts}
         />
       ) : filteredProducts.length ? (
         <>

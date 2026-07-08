@@ -22,7 +22,8 @@ Set these in the Appwrite Console function settings:
 
 ```text
 OPENROUTER_API_KEY=
-OPENROUTER_MODEL=openrouter/free
+OPENROUTER_MODEL=tencent/hy3:free
+OPENROUTER_FALLBACK_MODELS=poolside/laguna-xs-2.1:free,cohere/north-mini-code:free
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_SITE_URL=http://localhost
 OPENROUTER_APP_NAME=MSME Pilot
@@ -103,7 +104,7 @@ This repository does not currently include `appwrite.json`, so deployment was no
 - Missing `x-appwrite-user-jwt`: execute the function through an authenticated Appwrite client.
 - Missing OCR text: run OCR first from `/invoice-scanner`.
 - Approved invoice: reset/revise the invoice before parsing again.
-- Model unavailable: change `OPENROUTER_MODEL` to an enabled OpenRouter model such as `openrouter/free`.
+- Model unavailable: change `OPENROUTER_MODEL` to an enabled OpenRouter model for your account.
 
 ## Limitations
 

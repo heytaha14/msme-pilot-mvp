@@ -21,12 +21,26 @@ import Card from '../../components/common/Card.jsx';
 import Input from '../../components/common/Input.jsx';
 import AuthLayout from '../../components/layout/AuthLayout.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
-import {
-  businessMetrics,
-  businessTypeOptions,
-  registrationChecklist,
-} from '../../data/mockData.js';
 import { isValidEmail, isValidIndianPhone } from '../../utils/validators.js';
+
+const businessTypeOptions = [
+  'Kirana Store',
+  'Medical Store',
+  'Hardware Store',
+  'Clothing Shop',
+  'Restaurant',
+  'Wholesaler',
+  'Manufacturer',
+  'Service Business',
+  'Other',
+];
+
+const registrationChecklist = [
+  'Create secure account',
+  'Add business profile',
+  'Connect inventory',
+  'Start AI recommendations',
+];
 
 const initialValues = {
   ownerName: '',
@@ -92,10 +106,10 @@ function SelectField({
 
 function RegisterPreviewPanel() {
   const previewMetrics = [
-    ['Business Health', businessMetrics.businessHealthScore],
-    ['Inventory', `${businessMetrics.totalProducts} products`],
-    ['Low Stock', businessMetrics.lowStock],
-    ['Pending Payments', businessMetrics.pendingPayments],
+    ['Business Health', 'Calculated live'],
+    ['Inventory', 'Your products'],
+    ['Low Stock', 'Tracked live'],
+    ['Pending Payments', 'From customers'],
   ];
 
   return (
@@ -119,9 +133,9 @@ function RegisterPreviewPanel() {
             Onboarding preview
           </Badge>
           <h2 className="mt-6 text-3xl font-black tracking-tight">
-            Ahmed Kirana Store
+            Your Business Workspace
           </h2>
-          <p className="mt-2 text-sm font-semibold text-cyan-100">Kirana Store</p>
+          <p className="mt-2 text-sm font-semibold text-cyan-100">Created after signup</p>
         </div>
 
         <div className="mt-8 grid grid-cols-2 gap-3">
@@ -139,7 +153,7 @@ function RegisterPreviewPanel() {
             <div>
               <p className="text-sm font-black text-white">AI Tip</p>
               <p className="mt-1 text-sm leading-6 text-slate-300">
-                Restock Rice before Friday and follow up with Ahmed Traders.
+                Add your products and customers to receive live business recommendations.
               </p>
             </div>
           </div>
@@ -300,7 +314,7 @@ export default function RegisterPage() {
               label="Owner name"
               name="ownerName"
               onChange={updateField}
-              placeholder="Taha"
+              placeholder="Owner name"
               value={values.ownerName}
             />
             <Input
@@ -310,7 +324,7 @@ export default function RegisterPage() {
               label="Business name"
               name="businessName"
               onChange={updateField}
-              placeholder="Ahmed Kirana Store"
+              placeholder="Your business name"
               value={values.businessName}
             />
           </div>

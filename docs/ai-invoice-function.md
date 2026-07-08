@@ -22,7 +22,8 @@ The function receives:
 
 ```text
 OPENROUTER_API_KEY=
-OPENROUTER_MODEL=openrouter/free
+OPENROUTER_MODEL=tencent/hy3:free
+OPENROUTER_FALLBACK_MODELS=poolside/laguna-xs-2.1:free,cohere/north-mini-code:free
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_SITE_URL=http://localhost
 OPENROUTER_APP_NAME=MSME Pilot
@@ -31,6 +32,8 @@ APPWRITE_PROJECT_ID=
 APPWRITE_API_KEY=
 APPWRITE_DATABASE_ID=msme_pilot
 ```
+
+`OPENROUTER_MODEL` should be a real model ID available to your OpenRouter account. The function also tries `OPENROUTER_FALLBACK_MODELS` and then bundled free-model fallbacks if the selected provider/model is unavailable.
 
 Never create:
 

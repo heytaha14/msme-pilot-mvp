@@ -303,7 +303,9 @@ function InvoicePanel({ onChange, onSave, onToggle, settings }) {
       <div className="mt-6 rounded-3xl border border-slate-200 bg-slate-50 p-5">
         <div className="flex items-start justify-between gap-4">
           <div>
-            <p className="font-black text-slate-950">Ahmed Kirana Store</p>
+            <p className="font-black text-slate-950">
+              {settings.business.businessName || 'Your Business'}
+            </p>
             <p className="mt-1 text-sm font-semibold text-slate-500">
               {settings.invoice.invoicePrefix}-1001
             </p>

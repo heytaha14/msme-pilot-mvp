@@ -31,11 +31,6 @@ import SectionHeader from '../../components/common/SectionHeader.jsx';
 import StatCard from '../../components/common/StatCard.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import {
-  businessProfile,
-  supplierCategories,
-  suppliers as mockSuppliers,
-} from '../../data/mockData.js';
-import {
   createSupplier,
   deleteSupplier,
   getSupplierStats,
@@ -54,6 +49,16 @@ import { isValidIndianPhone } from '../../utils/validators.js';
 const paymentFilters = ['All Suppliers', 'Paid', 'Due', 'Overdue'];
 const sortOptions = ['Latest', 'Highest Purchase', 'Highest Due', 'Name A-Z'];
 const paymentMethods = ['UPI', 'Bank Transfer', 'Cash'];
+const supplierCategories = [
+  'Grocery',
+  'Household',
+  'Personal Care',
+  'Beverages',
+  'Dairy',
+  'Packaging',
+  'Snacks',
+  'Other',
+];
 
 const emptySupplierForm = {
   name: '',
@@ -726,7 +731,7 @@ function SupplierDetailsModal({ onClose, supplier }) {
   );
 }
 
-function PaymentModal({ isSaving, onClose, onPaid, supplier }) {
+function PaymentModal({ businessName, isSaving, onClose, onPaid, supplier }) {
   const [method, setMethod] = useState('UPI');
 
   return (
@@ -758,7 +763,7 @@ function PaymentModal({ isSaving, onClose, onPaid, supplier }) {
             </div>
           </div>
           <p className="mt-4 text-sm leading-6 text-slate-600">
-            Payment against recent supply invoices for {businessProfile.businessName}.
+            Payment against recent supply invoices for {businessName}.
           </p>
         </div>
 
@@ -844,7 +849,7 @@ function EmptyState({ onClear }) {
   );
 }
 
-function FirstTimeEmptyState({ isSeeding, onAddSupplier, onSeedDemo }) {
+function FirstTimeEmptyState({ onAddSupplier }) {
   return (
     <Card className="text-center" padding="lg">
       <div className="mx-auto grid h-16 w-16 place-items-center rounded-3xl bg-indigo-50 text-indigo-600">
@@ -860,9 +865,6 @@ function FirstTimeEmptyState({ isSeeding, onAddSupplier, onSeedDemo }) {
         <Button onClick={onAddSupplier}>
           <UserPlus className="h-4 w-4" />
           Add Supplier
-        </Button>
-        <Button loading={isSeeding} onClick={onSeedDemo} variant="secondary">
-          Load Demo Suppliers
         </Button>
       </div>
     </Card>
@@ -886,11 +888,11 @@ function SuppliersLoadingState() {
 }
 
 export default function SuppliersPage() {
-  const { user } = useAuth();
+  const { profile, user } = useAuth();
+  const businessName = profile?.businessName || 'your business';
   const [suppliers, setSuppliers] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [isSeeding, setIsSeeding] = useState(false);
   const [mutationLoading, setMutationLoading] = useState(false);
   const [successMessage, setSuccessMessage] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
@@ -1081,55 +1083,6 @@ export default function SuppliersPage() {
     }
   }
 
-  async function seedDemoSuppliers() {
-    if (!user?.$id) {
-      setErrorMessage('You must be logged in to seed demo suppliers.');
-      return;
-    }
-
-    if (
-      suppliers.length > 0 &&
-      !window.confirm('You already have suppliers. Add demo suppliers anyway?')
-    ) {
-      return;
-    }
-
-    const existingKeys = new Set(
-      suppliers.flatMap((supplier) => [
-        String(supplier.phone || '').toLowerCase(),
-        String(supplier.name || '').toLowerCase(),
-      ]),
-    );
-    const seedSuppliers = mockSuppliers.filter(
-      (supplier) =>
-        !existingKeys.has(String(supplier.phone || '').toLowerCase()) &&
-        !existingKeys.has(String(supplier.name || '').toLowerCase()),
-    );
-
-    if (!seedSuppliers.length) {
-      showSuccess('Demo suppliers already exist in this ledger.');
-      return;
-    }
-
-    setIsSeeding(true);
-    setErrorMessage('');
-
-    try {
-      const createdSuppliers = [];
-
-      for (const supplier of seedSuppliers) {
-        createdSuppliers.push(await createSupplier(user.$id, supplier));
-      }
-
-      setSuppliers((current) => [...createdSuppliers, ...current]);
-      showSuccess(`${createdSuppliers.length} demo suppliers added successfully.`);
-    } catch (error) {
-      setErrorMessage(error.message);
-    } finally {
-      setIsSeeding(false);
-    }
-  }
-
   return (
     <div className="space-y-6">
       <SectionHeader
@@ -1261,9 +1214,7 @@ export default function SuppliersPage() {
         <SuppliersLoadingState />
       ) : !suppliers.length ? (
         <FirstTimeEmptyState
-          isSeeding={isSeeding}
           onAddSupplier={() => openSupplierModal('add')}
-          onSeedDemo={seedDemoSuppliers}
         />
       ) : filteredSuppliers.length ? (
         <>
@@ -1319,6 +1270,7 @@ export default function SuppliersPage() {
 
       {modalState.type === 'pay' && modalState.supplier ? (
         <PaymentModal
+          businessName={businessName}
           isSaving={mutationLoading}
           onClose={() => setModalState({ type: null, supplier: null })}
           onPaid={handleMarkSupplierPaid}

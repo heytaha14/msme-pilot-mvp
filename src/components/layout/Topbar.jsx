@@ -6,7 +6,7 @@ import Input from '../common/Input.jsx';
 
 export default function Topbar({ title }) {
   const { profile, user } = useAuth();
-  const ownerName = profile?.ownerName || user?.name || user?.email || 'Taha';
+  const ownerName = profile?.ownerName || user?.name || user?.email || 'Owner';
   const businessName = profile?.businessName || 'MSME Pilot';
   const initial = ownerName.charAt(0).toUpperCase();
 

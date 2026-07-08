@@ -101,7 +101,7 @@ Before production, final sale posting should move into a secure Appwrite Functio
 
 ## Demo Seed Behavior
 
-`Load Demo Sales` creates sample sales only when the logged-in user already has products and customers. It uses matching product/customer names where possible and keeps demo quantities small to avoid stock errors.
+Demo sale seeding was removed after the real Appwrite CRUD pass. Create sales from real customers and products through the Sales UI.
 
 ## Troubleshooting
 

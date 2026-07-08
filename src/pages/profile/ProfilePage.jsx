@@ -39,16 +39,6 @@ import SectionHeader from '../../components/common/SectionHeader.jsx';
 import StatCard from '../../components/common/StatCard.jsx';
 import { useAuth } from '../../context/AuthContext.jsx';
 import {
-  accountPlan as mockAccountPlan,
-  addressProfile,
-  businessDetailsProfile,
-  businessProfile,
-  gstProfile,
-  profileActivity,
-  profileChecklist,
-  userProfile,
-} from '../../data/mockData.js';
-import {
   formatDate,
   formatPhone,
   getAccountStatusBadge,
@@ -71,6 +61,68 @@ const businessTypeOptions = [
 const languageOptions = ['English', 'Hindi', 'Telugu', 'Tamil', 'Kannada'];
 const filingOptions = ['Monthly', 'Quarterly', 'Annual'];
 const gstRegisteredOptions = ['Yes', 'No'];
+
+const userProfile = {
+  ownerName: 'Owner',
+  email: '',
+  phone: '',
+  role: 'Owner',
+  languagePreference: 'English',
+  joinedAt: '',
+};
+
+const businessDetailsProfile = {
+  businessName: 'MSME Pilot',
+  businessType: 'Retail / Kirana',
+  industry: 'Retail',
+  businessSize: 'Micro Enterprise',
+  employees: '1',
+  establishedYear: String(new Date().getFullYear()),
+};
+
+const addressProfile = {
+  address: '',
+  city: '',
+  state: '',
+  pinCode: '',
+  country: 'India',
+  businessPhone: '',
+  supportEmail: '',
+};
+
+const gstProfile = {
+  gstRegistered: 'No',
+  gstin: '',
+  pan: '',
+  businessCategory: 'Regular Taxpayer',
+  filingFrequency: 'Monthly',
+  lastGstReview: '',
+};
+
+const accountPlan = {
+  plan: 'Pilot Beta',
+  billing: 'Free during pilot',
+  accountType: 'MSME Owner',
+  workspaceId: 'MSME-WORKSPACE',
+  storageUsedMb: 0,
+  storageLimitMb: 1024,
+  aiUsage: 0,
+  aiLimit: 500,
+};
+
+const profileChecklist = [
+  { id: 'owner', label: 'Owner details added', completed: true },
+  { id: 'business', label: 'Business details added', completed: true },
+  { id: 'gst', label: 'GST details optional', completed: false },
+  { id: 'address', label: 'Address pending', completed: false },
+  { id: 'logo', label: 'Business logo missing', completed: false },
+  { id: 'bank', label: 'Bank details pending later', completed: false },
+];
+
+const profileActivity = [
+  { id: 1, title: 'Business profile connected', date: new Date().toISOString() },
+  { id: 2, title: 'Account identity loaded from Appwrite', date: new Date().toISOString() },
+];
 
 const editFields = {
   owner: {
@@ -338,7 +390,7 @@ function AiInsightCard({ onImprove }) {
   );
 }
 
-function BrandingCard({ logoPreview, onLogoChange }) {
+function BrandingCard({ businessName, logoPreview, onLogoChange }) {
   return (
     <Card hover>
       <div className="flex items-start justify-between gap-4">
@@ -376,7 +428,7 @@ function BrandingCard({ logoPreview, onLogoChange }) {
           <div className="flex items-center gap-3 border-b border-slate-200 pb-4">
             <LogoMark logoPreview={logoPreview} size="sm" />
             <div>
-              <p className="font-black text-slate-950">Ahmed Kirana Store</p>
+              <p className="font-black text-slate-950">{businessName || 'Your Business'}</p>
               <p className="text-sm text-slate-500">Invoice header preview</p>
             </div>
           </div>
@@ -751,13 +803,24 @@ export default function ProfilePage() {
 
   const profile = useMemo(
     () => ({
-      ...businessProfile,
       businessName: business.businessName,
       businessType: business.businessType,
       ownerName: owner.ownerName,
-      location: `${address.city}, ${address.state}`,
+      location: [address.city, address.state].filter(Boolean).join(', ') || 'India',
+      accountStatus: authProfile?.accountStatus || 'Active',
+      profileCompletion: authProfile?.profileCompletion || 45,
+      plan: authProfile?.plan || accountPlan.plan,
     }),
-    [address.city, address.state, business.businessName, business.businessType, owner.ownerName],
+    [
+      address.city,
+      address.state,
+      authProfile?.accountStatus,
+      authProfile?.plan,
+      authProfile?.profileCompletion,
+      business.businessName,
+      business.businessType,
+      owner.ownerName,
+    ],
   );
 
   const activeEditData = {
@@ -821,8 +884,8 @@ export default function ProfilePage() {
     },
     {
       title: 'Current Plan',
-      value: mockAccountPlan.plan,
-      trend: mockAccountPlan.billing,
+      value: accountPlan.plan,
+      trend: accountPlan.billing,
       status: 'info',
       icon: CreditCard,
     },
@@ -988,9 +1051,13 @@ export default function ProfilePage() {
       </section>
 
       <section className="grid gap-6 xl:grid-cols-[1fr_0.85fr]">
-        <BrandingCard logoPreview={logoPreview} onLogoChange={handleLogoChange} />
+        <BrandingCard
+          businessName={business.businessName}
+          logoPreview={logoPreview}
+          onLogoChange={handleLogoChange}
+        />
         <AccountPlanCard
-          accountPlan={mockAccountPlan}
+          accountPlan={accountPlan}
           onAction={(message) => showSuccess(message)}
         />
       </section>
