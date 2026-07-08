@@ -1,5 +1,6 @@
 import { BUCKET_IDS } from '../config/appwriteSchema.js';
-import { ID, Permission, Role, storage } from '../lib/appwrite.js';
+import { ID, storage } from '../lib/appwrite.js';
+import { userFilePermissions } from '../utils/appwritePermissions.js';
 import { createFriendlyAppwriteError } from '../utils/appwriteErrors.js';
 
 const allowedMimeTypes = [
@@ -34,11 +35,7 @@ export async function uploadInvoiceFile(userId, file) {
       BUCKET_IDS.INVOICE_IMAGES,
       ID.unique(),
       file,
-      [
-        Permission.read(Role.user(userId)),
-        Permission.update(Role.user(userId)),
-        Permission.delete(Role.user(userId)),
-      ],
+      userFilePermissions(userId),
     );
   } catch (error) {
     throw createFriendlyAppwriteError(error, 'Could not upload invoice file.');

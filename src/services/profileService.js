@@ -3,10 +3,9 @@ import {
   databases,
   ID,
   isAppwriteConfigured,
-  Permission,
   Query,
-  Role,
 } from '../lib/appwrite.js';
+import { userDocumentPermissions } from '../utils/appwritePermissions.js';
 import { mapAuthError } from '../utils/authErrors.js';
 
 function assertAppwriteConfigured() {
@@ -86,11 +85,7 @@ export async function createBusinessProfile(user, registrationData) {
       COLLECTION_IDS.BUSINESS_PROFILES,
       ID.unique(),
       document,
-      [
-        Permission.read(Role.user(user.$id)),
-        Permission.update(Role.user(user.$id)),
-        Permission.delete(Role.user(user.$id)),
-      ],
+      userDocumentPermissions(user.$id),
     );
   } catch (error) {
     normalizeProfileError(error);

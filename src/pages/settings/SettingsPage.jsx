@@ -44,6 +44,7 @@ import {
   getSettingsStatusBadge,
 } from '../../utils/formatters.js';
 import { getAiParseFunctionId } from '../../services/aiInvoiceService.js';
+import { getAiAssistantFunctionId } from '../../services/aiAssistantService.js';
 
 const categoryIcons = {
   Account: UserCog,
@@ -482,14 +483,17 @@ function DataBackupPanel({ onAction, onChange, onSave, onToggle, settings }) {
 }
 
 function IntegrationsPanel({ onAction }) {
-  const aiFunctionConfigured = Boolean(getAiParseFunctionId());
+  const invoiceAiFunctionConfigured = Boolean(getAiParseFunctionId());
+  const assistantAiFunctionConfigured = Boolean(getAiAssistantFunctionId());
   const integrations = integrationSettings.map((integration) =>
     integration.name === 'GPT-5 Nano'
       ? {
           ...integration,
-          status: aiFunctionConfigured ? 'Configured' : 'Not Configured',
-          description: aiFunctionConfigured
-            ? 'Secure invoice parsing is routed through an Appwrite Function.'
+          status: assistantAiFunctionConfigured ? 'Configured' : invoiceAiFunctionConfigured ? 'Demo Mode' : 'Not Configured',
+          description: assistantAiFunctionConfigured
+            ? 'AI Assistant is routed through a secure Appwrite Function. OpenRouter keys stay server-side.'
+            : invoiceAiFunctionConfigured
+              ? 'Invoice AI parsing is configured. AI Assistant function is still pending.'
             : integration.description,
         }
       : integration,
@@ -719,7 +723,7 @@ export default function SettingsPage() {
   const overviewCards = [
     { title: 'Account', value: 'Active', trend: 'Owner profile ready', status: getSettingsStatusBadge('Active'), icon: UserCog },
     { title: 'Notifications', value: 'Enabled', trend: 'In-app alerts active', status: getSettingsStatusBadge('Enabled'), icon: Bell },
-    { title: 'AI Assistant', value: 'Demo Mode', trend: 'Secure function planned', status: getSettingsStatusBadge('Demo Mode'), icon: Bot },
+    { title: 'AI Assistant', value: getAiAssistantFunctionId() ? 'Configured' : 'Not Configured', trend: 'Secure function backend', status: getSettingsStatusBadge(getAiAssistantFunctionId() ? 'Enabled' : 'Warning'), icon: Bot },
     { title: 'Security', value: 'Standard', trend: '2FA pending later', status: getSettingsStatusBadge('Standard'), icon: ShieldCheck },
   ];
 

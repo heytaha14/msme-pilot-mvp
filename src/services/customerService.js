@@ -1,7 +1,9 @@
 import { DATABASE_ID, COLLECTION_IDS } from '../config/appwriteSchema.js';
-import { databases, ID, Permission, Query, Role } from '../lib/appwrite.js';
+import { databases, ID, Query } from '../lib/appwrite.js';
+import { userDocumentPermissions } from '../utils/appwritePermissions.js';
 import { createFriendlyAppwriteError } from '../utils/appwriteErrors.js';
 import { getCustomerPaymentStatus } from '../utils/formatters.js';
+import { assertOwnsDocument } from '../utils/ownership.js';
 
 const allowedCustomerFields = [
   'name',
@@ -64,12 +66,6 @@ function pickAllowedFields(customerData) {
   }, {});
 }
 
-function assertCustomerOwner(customer, userId) {
-  if (!customer || customer.userId !== userId) {
-    throw new Error('Permission error. Customer does not belong to the current user.');
-  }
-}
-
 export function toCustomerRecord(document) {
   return {
     ...document,
@@ -105,7 +101,7 @@ export async function getCustomer(userId, customerId) {
       customerId,
     );
 
-    assertCustomerOwner(customer, userId);
+    assertOwnsDocument(customer, userId, 'Customer');
     return toCustomerRecord(customer);
   } catch (error) {
     throw createFriendlyAppwriteError(error, 'Could not load customer details.');
@@ -128,11 +124,7 @@ export async function createCustomer(userId, customerData) {
         createdAt: now,
         updatedAt: now,
       },
-      [
-        Permission.read(Role.user(userId)),
-        Permission.update(Role.user(userId)),
-        Permission.delete(Role.user(userId)),
-      ],
+      userDocumentPermissions(userId),
     );
 
     return toCustomerRecord(createdCustomer);
@@ -152,7 +144,7 @@ export async function updateCustomer(userId, customerId, customerData) {
       customerId,
     );
 
-    assertCustomerOwner(existingCustomer, userId);
+    assertOwnsDocument(existingCustomer, userId, 'Customer');
 
     const normalized = normalizeCustomerInput({
       ...existingCustomer,
@@ -188,7 +180,7 @@ export async function deleteCustomer(userId, customerId) {
       customerId,
     );
 
-    assertCustomerOwner(existingCustomer, userId);
+    assertOwnsDocument(existingCustomer, userId, 'Customer');
     await databases.deleteDocument(DATABASE_ID, COLLECTION_IDS.CUSTOMERS, customerId);
 
     return { success: true };

@@ -1,6 +1,8 @@
 import { DATABASE_ID, COLLECTION_IDS } from '../config/appwriteSchema.js';
-import { databases, ID, Permission, Query, Role } from '../lib/appwrite.js';
+import { databases, ID, Query } from '../lib/appwrite.js';
+import { userDocumentPermissions } from '../utils/appwritePermissions.js';
 import { createFriendlyAppwriteError } from '../utils/appwriteErrors.js';
+import { assertOwnsDocument } from '../utils/ownership.js';
 import {
   calculateInvoiceGstAmount,
   calculateInvoiceSubtotal,
@@ -56,15 +58,11 @@ function toInputDate(value) {
 }
 
 function assertInvoiceOwner(invoice, userId) {
-  if (!invoice || invoice.userId !== userId) {
-    throw new Error('Permission error. Invoice does not belong to the current user.');
-  }
+  return assertOwnsDocument(invoice, userId, 'Invoice');
 }
 
 function assertInvoiceItemOwner(item, userId) {
-  if (!item || item.userId !== userId) {
-    throw new Error('Permission error. Invoice item does not belong to the current user.');
-  }
+  return assertOwnsDocument(item, userId, 'Invoice item');
 }
 
 function normalizeInvoiceDocument(invoiceData, items = []) {
@@ -190,11 +188,7 @@ export async function createInvoiceItem(userId, invoiceId, itemData) {
         createdAt: now,
         updatedAt: now,
       },
-      [
-        Permission.read(Role.user(userId)),
-        Permission.update(Role.user(userId)),
-        Permission.delete(Role.user(userId)),
-      ],
+      userDocumentPermissions(userId),
     );
 
     return toInvoiceItemRecord(createdItem);
@@ -330,11 +324,7 @@ export async function createPurchaseInvoice(userId, invoiceData, items = []) {
         createdAt: now,
         updatedAt: now,
       },
-      [
-        Permission.read(Role.user(userId)),
-        Permission.update(Role.user(userId)),
-        Permission.delete(Role.user(userId)),
-      ],
+      userDocumentPermissions(userId),
     );
 
     await Promise.all(

@@ -1,5 +1,6 @@
 import { DATABASE_ID, COLLECTION_IDS } from '../config/appwriteSchema.js';
-import { databases, ID, Permission, Query, Role } from '../lib/appwrite.js';
+import { databases, ID, Query } from '../lib/appwrite.js';
+import { userDocumentPermissions } from '../utils/appwritePermissions.js';
 import { createFriendlyAppwriteError } from '../utils/appwriteErrors.js';
 
 export async function createInventoryMovement(userId, movementData) {
@@ -26,11 +27,7 @@ export async function createInventoryMovement(userId, movementData) {
       COLLECTION_IDS.INVENTORY_MOVEMENTS,
       ID.unique(),
       document,
-      [
-        Permission.read(Role.user(userId)),
-        Permission.update(Role.user(userId)),
-        Permission.delete(Role.user(userId)),
-      ],
+      userDocumentPermissions(userId),
     );
   } catch (error) {
     if (import.meta.env.DEV) {

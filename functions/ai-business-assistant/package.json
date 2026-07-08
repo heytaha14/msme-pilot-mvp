@@ -1,0 +1,16 @@
+{
+  "name": "ai-business-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "node src/main.js",
+    "check": "node -e \"Promise.all([import('./src/main.js'), import('./src/responseSchema.js'), import('./src/promptBuilder.js')]).then(() => console.log('AI assistant function modules loaded'))\""
+  },
+  "dependencies": {
+    "node-appwrite": "^26.2.0",
+    "openai": "^6.10.0",
+    "zod": "^4.1.13"
+  }
+}

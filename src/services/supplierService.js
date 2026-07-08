@@ -1,7 +1,9 @@
 import { DATABASE_ID, COLLECTION_IDS } from '../config/appwriteSchema.js';
-import { databases, ID, Permission, Query, Role } from '../lib/appwrite.js';
+import { databases, ID, Query } from '../lib/appwrite.js';
+import { userDocumentPermissions } from '../utils/appwritePermissions.js';
 import { createFriendlyAppwriteError } from '../utils/appwriteErrors.js';
 import { getSupplierPaymentStatus } from '../utils/formatters.js';
+import { assertOwnsDocument } from '../utils/ownership.js';
 
 const allowedSupplierFields = [
   'name',
@@ -78,12 +80,6 @@ function pickAllowedFields(supplierData) {
   }, {});
 }
 
-function assertSupplierOwner(supplier, userId) {
-  if (!supplier || supplier.userId !== userId) {
-    throw new Error('Permission error. Supplier does not belong to the current user.');
-  }
-}
-
 export function toSupplierRecord(document) {
   const productsSupplied = Array.isArray(document.productsSupplied)
     ? document.productsSupplied
@@ -127,7 +123,7 @@ export async function getSupplier(userId, supplierId) {
       supplierId,
     );
 
-    assertSupplierOwner(supplier, userId);
+    assertOwnsDocument(supplier, userId, 'Supplier');
     return toSupplierRecord(supplier);
   } catch (error) {
     throw createFriendlyAppwriteError(error, 'Could not load supplier details.');
@@ -150,11 +146,7 @@ export async function createSupplier(userId, supplierData) {
         createdAt: now,
         updatedAt: now,
       },
-      [
-        Permission.read(Role.user(userId)),
-        Permission.update(Role.user(userId)),
-        Permission.delete(Role.user(userId)),
-      ],
+      userDocumentPermissions(userId),
     );
 
     return toSupplierRecord(createdSupplier);
@@ -174,7 +166,7 @@ export async function updateSupplier(userId, supplierId, supplierData) {
       supplierId,
     );
 
-    assertSupplierOwner(existingSupplier, userId);
+    assertOwnsDocument(existingSupplier, userId, 'Supplier');
 
     const normalized = normalizeSupplierInput({
       ...existingSupplier,
@@ -210,7 +202,7 @@ export async function deleteSupplier(userId, supplierId) {
       supplierId,
     );
 
-    assertSupplierOwner(existingSupplier, userId);
+    assertOwnsDocument(existingSupplier, userId, 'Supplier');
     await databases.deleteDocument(DATABASE_ID, COLLECTION_IDS.SUPPLIERS, supplierId);
 
     return { success: true };

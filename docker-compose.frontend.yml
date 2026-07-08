@@ -1,0 +1,12 @@
+services:
+  msme-pilot-frontend:
+    build:
+      context: .
+      args:
+        VITE_APPWRITE_ENDPOINT: ${VITE_APPWRITE_ENDPOINT}
+        VITE_APPWRITE_PROJECT_ID: ${VITE_APPWRITE_PROJECT_ID}
+        VITE_APPWRITE_PARSE_INVOICE_FUNCTION_ID: ${VITE_APPWRITE_PARSE_INVOICE_FUNCTION_ID}
+        VITE_APPWRITE_AI_ASSISTANT_FUNCTION_ID: ${VITE_APPWRITE_AI_ASSISTANT_FUNCTION_ID}
+    ports:
+      - "8080:80"
+    restart: unless-stopped

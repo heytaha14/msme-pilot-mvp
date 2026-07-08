@@ -1,12 +1,12 @@
 import { DATABASE_ID, COLLECTION_IDS } from '../config/appwriteSchema.js';
-import { databases, ID, Permission, Query, Role } from '../lib/appwrite.js';
+import { databases, ID, Query } from '../lib/appwrite.js';
+import { userDocumentPermissions } from '../utils/appwritePermissions.js';
 import { createFriendlyAppwriteError } from '../utils/appwriteErrors.js';
+import { assertOwnsDocument } from '../utils/ownership.js';
 import { normalizeSaleItem } from '../utils/salesCalculations.js';
 
 function assertSaleItemOwner(item, userId) {
-  if (!item || item.userId !== userId) {
-    throw new Error('Permission error. Sale item does not belong to the current user.');
-  }
+  return assertOwnsDocument(item, userId, 'Sale item');
 }
 
 export function toSaleItemRecord(document) {
@@ -71,11 +71,7 @@ export async function createSaleItem(userId, saleId, itemData) {
         createdAt: now,
         updatedAt: now,
       },
-      [
-        Permission.read(Role.user(userId)),
-        Permission.update(Role.user(userId)),
-        Permission.delete(Role.user(userId)),
-      ],
+      userDocumentPermissions(userId),
     );
 
     return toSaleItemRecord(createdItem);

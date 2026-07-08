@@ -20,7 +20,7 @@ export const COLLECTION_IDS = {
 
 export const BUCKET_IDS = {
   INVOICE_IMAGES: 'invoice_images',
-  PRODUCT_IMAGES: 'product_images',
-  COMPANY_LOGOS: 'company_logos',
-  REPORT_PDFS: 'report_pdfs',
+  PRODUCT_IMAGES: 'invoice_images',
+  COMPANY_LOGOS: 'invoice_images',
+  REPORT_PDFS: 'invoice_images',
 };

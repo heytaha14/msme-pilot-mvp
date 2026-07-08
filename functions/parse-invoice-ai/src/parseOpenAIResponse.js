@@ -20,6 +20,10 @@ export function getResponseText(response) {
 
 export function parseOpenAIResponse(response) {
   const text = getResponseText(response);
+  return parseAiInvoiceText(text);
+}
+
+export function parseAiInvoiceText(text) {
   const parsed = safeJsonParse(text, null);
 
   if (!parsed) {

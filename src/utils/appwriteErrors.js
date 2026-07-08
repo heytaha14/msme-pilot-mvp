@@ -5,7 +5,12 @@ export function mapAppwriteError(error, fallbackMessage = 'Something went wrong.
   const lowerMessage = message.toLowerCase();
   const lowerType = type.toLowerCase();
 
-  if (code === 401 || lowerType.includes('user_unauthorized')) {
+  if (
+    code === 401 ||
+    lowerType.includes('user_unauthorized') ||
+    lowerMessage.includes('missing scope') ||
+    lowerMessage.includes('session')
+  ) {
     return 'Your session has expired. Please login again.';
   }
 
@@ -21,12 +26,14 @@ export function mapAppwriteError(error, fallbackMessage = 'Something went wrong.
     code === 404 &&
     (
       lowerMessage.includes('generated_reports') ||
+      lowerMessage.includes('business_health_snapshots') ||
+      lowerMessage.includes('notifications') ||
       lowerMessage.includes('sale_items') ||
       lowerMessage.includes('invoice_items') ||
       lowerMessage.includes('purchase_invoices')
     )
   ) {
-    return 'A report data collection is missing. Run the Appwrite schema setup before generating real reports.';
+    return 'A required analytics collection is missing. Run the Appwrite schema setup before using reports or business health.';
   }
 
   if (lowerMessage.includes('bucket') && code === 404) {
@@ -39,6 +46,10 @@ export function mapAppwriteError(error, fallbackMessage = 'Something went wrong.
 
   if (lowerMessage.includes('index')) {
     return 'Required Appwrite index is missing. Run the Appwrite schema setup first.';
+  }
+
+  if (code === 429 || lowerMessage.includes('rate limit') || lowerType.includes('rate_limit')) {
+    return 'Too many requests. Please wait a moment and try again.';
   }
 
   if (lowerMessage.includes('not enough stock') || lowerMessage.includes('insufficient stock')) {

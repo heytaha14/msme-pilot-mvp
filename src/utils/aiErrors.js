@@ -24,7 +24,7 @@ export function getAiInvoiceErrorMessage(error) {
   }
 
   if (message.includes('model') || type.includes('model')) {
-    return 'Configured OpenAI model is unavailable. Set OPENAI_MODEL to an enabled model.';
+    return 'Configured AI model is unavailable. Check the function model setting.';
   }
 
   if (message.includes('network') || message.includes('failed to fetch')) {
@@ -38,8 +38,69 @@ export function getAiInvoiceErrorMessage(error) {
   return error?.message || 'AI invoice parsing failed. Please try again or review manually.';
 }
 
+export function getAiAssistantErrorMessage(error) {
+  const message = String(error?.message || error || '').toLowerCase();
+  const type = String(error?.type || error?.code || '').toLowerCase();
+  const statusCode = Number(error?.responseStatusCode || error?.code || error?.statusCode || 0);
+
+  if (message.includes('not configured') || message.includes('function id')) {
+    return 'AI Assistant function is not configured. Add VITE_APPWRITE_AI_ASSISTANT_FUNCTION_ID.';
+  }
+
+  if (statusCode === 401 || message.includes('authenticated') || message.includes('jwt')) {
+    return 'Please log in again to use AI Assistant.';
+  }
+
+  if (statusCode === 403 || message.includes('permission') || message.includes('mismatch')) {
+    return 'Permission error. AI could not access your business context.';
+  }
+
+  if (message.includes('openrouter') && (message.includes('key') || message.includes('auth'))) {
+    return 'AI Assistant is not fully configured. Add the server-side OpenRouter key in the Appwrite Function environment.';
+  }
+
+  if (message.includes('openai_api_key') || type.includes('openai_key_missing')) {
+    return 'AI Assistant is not fully configured. Add the server-side AI provider key in the Appwrite Function environment.';
+  }
+
+  if (message.includes('appwrite_api_key') || message.includes('missing required environment variable')) {
+    return 'AI Assistant backend is missing server-side Appwrite environment variables.';
+  }
+
+  if (message.includes('model') || type.includes('model')) {
+    return 'Configured AI model is unavailable. Check the function model setting.';
+  }
+
+  if (message.includes('history') || message.includes('ai_history')) {
+    return 'AI response was generated, but chat history could not be saved.';
+  }
+
+  if (message.includes('response') && message.includes('schema')) {
+    return 'AI returned an unexpected response format. Please try again.';
+  }
+
+  if (statusCode === 429 || message.includes('rate limit')) {
+    return 'AI Assistant is rate limited right now. Please wait a moment and try again.';
+  }
+
+  if (message.includes('context')) {
+    return 'AI could not access your business context.';
+  }
+
+  if (message.includes('network') || message.includes('failed to fetch')) {
+    return 'Network error while contacting the AI Assistant function.';
+  }
+
+  if (message.includes('temporarily unavailable') || type.includes('ai_assistant')) {
+    return 'AI Assistant is temporarily unavailable. Please try again.';
+  }
+
+  return error?.message || 'AI Assistant request failed. Please try again.';
+}
+
 export function getAiSourceLabel(source = '') {
   if (source === 'openai_appwrite_function') return 'OpenAI Appwrite Function';
+  if (source === 'openrouter_appwrite_function') return 'OpenRouter Appwrite Function';
   if (source === 'tesseract_local_ocr') return 'Local OCR Parser';
   if (source === 'upload_only_pdf') return 'Upload Only';
   if (source === 'local_manual_review') return 'Manual Review';

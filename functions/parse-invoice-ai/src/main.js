@@ -10,7 +10,7 @@ import {
   verifyJwtUser,
 } from './appwriteAdmin.js';
 import { invoiceExtractionJsonSchema } from './invoiceSchema.js';
-import { parseOpenAIResponse } from './parseOpenAIResponse.js';
+import { parseAiInvoiceText } from './parseOpenAIResponse.js';
 import { safeJsonParse, safeStringify, getRequestJson } from './safeJson.js';
 import {
   getAuthenticatedUserId,
@@ -176,11 +176,15 @@ function toInvoiceItem(aiItem) {
   };
 }
 
-function buildOpenAIInput(invoice) {
+function buildOpenRouterMessages(invoice) {
   return [
     {
       role: 'system',
-      content: SYSTEM_PROMPT,
+      content: [
+        SYSTEM_PROMPT,
+        'Return only a JSON object. No markdown, no explanation, no code fences.',
+        `Required JSON schema: ${JSON.stringify(invoiceExtractionJsonSchema)}`,
+      ].join('\n'),
     },
     {
       role: 'user',
@@ -198,57 +202,89 @@ function buildOpenAIInput(invoice) {
   ];
 }
 
-async function createAiResponse(openai, invoice, model, correctionText = '') {
-  const input = buildOpenAIInput(invoice);
+function getOpenRouterKey() {
+  const apiKey = process.env.OPENROUTER_API_KEY;
+  if (!apiKey) {
+    throw Object.assign(new Error('OpenRouter API key is missing in the Appwrite Function environment.'), {
+      statusCode: 500,
+      code: 'OPENROUTER_KEY_MISSING',
+    });
+  }
+
+  return apiKey;
+}
+
+function createOpenRouterClient() {
+  return new OpenAI({
+    apiKey: getOpenRouterKey(),
+    baseURL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
+    defaultHeaders: {
+      'HTTP-Referer': process.env.OPENROUTER_SITE_URL || 'http://localhost',
+      'X-OpenRouter-Title': process.env.OPENROUTER_APP_NAME || 'MSME Pilot',
+    },
+  });
+}
+
+async function createAiResponse(openrouter, invoice, model, correctionText = '') {
+  const messages = buildOpenRouterMessages(invoice);
   if (correctionText) {
-    input.push({
+    messages.push({
       role: 'user',
       content: `The previous JSON failed validation. Correct it and return only valid JSON. Validation issue: ${correctionText}`,
     });
   }
 
-  return openai.responses.create({
+  return openrouter.chat.completions.create({
     model,
-    input,
-    store: false,
-    text: {
-      verbosity: 'low',
-      format: {
-        type: 'json_schema',
-        name: 'msme_purchase_invoice_extraction',
-        schema: invoiceExtractionJsonSchema,
-        strict: true,
-      },
-    },
+    messages,
+    temperature: 0.1,
+    max_tokens: 2200,
+    response_format: { type: 'json_object' },
   });
 }
 
-async function parseWithOpenAI(invoice) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    throw Object.assign(new Error('OPENAI_API_KEY is missing in the Appwrite Function environment.'), {
-      statusCode: 500,
-      code: 'OPENAI_KEY_MISSING',
-    });
-  }
+function getCompletionText(response) {
+  return response?.choices?.[0]?.message?.content || '';
+}
 
-  const model = process.env.OPENAI_MODEL || 'gpt-5-nano';
-  const openai = new OpenAI({ apiKey });
+async function parseWithOpenRouter(invoice) {
+  const model = process.env.OPENROUTER_MODEL || 'openrouter/free';
+  const openrouter = createOpenRouterClient();
 
   try {
-    const response = await createAiResponse(openai, invoice, model);
-    return { parsed: parseOpenAIResponse(response), model };
+    const response = await createAiResponse(openrouter, invoice, model);
+    return {
+      parsed: parseAiInvoiceText(getCompletionText(response)),
+      model: response?.model || model,
+    };
   } catch (error) {
     if (error?.code === 'AI_VALIDATION_FAILED' || error?.code === 'AI_INVALID_JSON') {
-      const retryResponse = await createAiResponse(openai, invoice, model, error.message);
-      return { parsed: parseOpenAIResponse(retryResponse), model };
+      const retryResponse = await createAiResponse(openrouter, invoice, model, error.message);
+      return {
+        parsed: parseAiInvoiceText(getCompletionText(retryResponse)),
+        model: retryResponse?.model || model,
+      };
     }
 
     const message = String(error?.message || '').toLowerCase();
     if (message.includes('model') || message.includes('not found') || message.includes('does not exist')) {
       throw Object.assign(
-        new Error('Configured OpenAI model is unavailable. Set OPENAI_MODEL to an enabled model.'),
-        { statusCode: 502, code: 'OPENAI_MODEL_UNAVAILABLE' },
+        new Error('Configured OpenRouter model is unavailable. Set OPENROUTER_MODEL to an enabled model.'),
+        { statusCode: 502, code: 'OPENROUTER_MODEL_UNAVAILABLE' },
+      );
+    }
+
+    if (error?.status === 401 || message.includes('api key')) {
+      throw Object.assign(
+        new Error('OpenRouter authentication failed. Check the function API key.'),
+        { statusCode: 502, code: 'OPENROUTER_AUTH_FAILED' },
+      );
+    }
+
+    if (error?.status === 429 || message.includes('rate limit')) {
+      throw Object.assign(
+        new Error('OpenRouter free model rate limit reached. Try again later.'),
+        { statusCode: 429, code: 'OPENROUTER_RATE_LIMITED' },
       );
     }
 
@@ -288,7 +324,7 @@ export default async ({ req, res, log, error }) => {
 
     if (invoice.aiExtractedJson && !body.force) {
       const existing = safeJsonParse(invoice.aiExtractedJson, {});
-      if (existing?.source === 'openai_appwrite_function') {
+      if (['openai_appwrite_function', 'openrouter_appwrite_function'].includes(existing?.source)) {
         throw Object.assign(new Error('AI extraction already exists. Use force to parse again before approval.'), {
           statusCode: 409,
           code: 'AI_PARSE_EXISTS',
@@ -297,7 +333,7 @@ export default async ({ req, res, log, error }) => {
     }
 
     const previousPayload = safeJsonParse(invoice.aiExtractedJson, {});
-    const { parsed, model } = await parseWithOpenAI(invoice);
+    const { parsed, model } = await parseWithOpenRouter(invoice);
     const checks = deterministicChecks(parsed);
     const products = await listUserProducts(databases, userId);
     const suppliers = await listUserSuppliers(databases, userId);
@@ -315,7 +351,7 @@ export default async ({ req, res, log, error }) => {
       ? parsed.invoice.totalAmount
       : Number(invoice.totalAmount || 0);
     const metadata = {
-      source: 'openai_appwrite_function',
+      source: 'openrouter_appwrite_function',
       model,
       parsedAt: now,
       parserVersion: 'v1',

@@ -1,6 +1,8 @@
 import { DATABASE_ID, COLLECTION_IDS } from '../config/appwriteSchema.js';
-import { databases, ID, Permission, Query, Role } from '../lib/appwrite.js';
+import { databases, ID, Query } from '../lib/appwrite.js';
+import { userDocumentPermissions } from '../utils/appwritePermissions.js';
 import { createFriendlyAppwriteError } from '../utils/appwriteErrors.js';
+import { assertOwnsDocument } from '../utils/ownership.js';
 import {
   buildReportPayload,
   calculateInventoryValue,
@@ -299,11 +301,7 @@ export async function saveGeneratedReport(userId, reportData) {
         createdAt: now,
         updatedAt: now,
       },
-      [
-        Permission.read(Role.user(userId)),
-        Permission.update(Role.user(userId)),
-        Permission.delete(Role.user(userId)),
-      ],
+      userDocumentPermissions(userId),
     );
 
     return normalizeGeneratedReport(created);
@@ -337,9 +335,7 @@ export async function deleteGeneratedReport(userId, reportId) {
       reportId,
     );
 
-    if (report.userId !== userId) {
-      throw new Error('Permission error. Report does not belong to the current user.');
-    }
+    assertOwnsDocument(report, userId, 'Report');
 
     await databases.deleteDocument(DATABASE_ID, COLLECTION_IDS.GENERATED_REPORTS, reportId);
     return { success: true };

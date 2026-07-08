@@ -40,6 +40,8 @@ const summary = {
   bucketsFailed: 0,
 };
 
+const isFreePlanMode = String(process.env.APPWRITE_FREE_PLAN ?? 'true').toLowerCase() !== 'false';
+
 function fail(message) {
   console.error(`\n[appwrite:setup] ${message}`);
   process.exitCode = 1;
@@ -534,26 +536,8 @@ const collectionSchemas = [
 const bucketSchemas = [
   {
     id: BUCKET_IDS.INVOICE_IMAGES,
-    name: 'Invoice Images',
-    extensions: ['jpg', 'jpeg', 'png', 'webp', 'pdf'],
-    maxSize: 20 * 1024 * 1024,
-  },
-  {
-    id: BUCKET_IDS.PRODUCT_IMAGES,
-    name: 'Product Images',
-    extensions: ['jpg', 'jpeg', 'png', 'webp'],
-    maxSize: 10 * 1024 * 1024,
-  },
-  {
-    id: BUCKET_IDS.COMPANY_LOGOS,
-    name: 'Company Logos',
-    extensions: ['jpg', 'jpeg', 'png', 'webp', 'svg'],
-    maxSize: 5 * 1024 * 1024,
-  },
-  {
-    id: BUCKET_IDS.REPORT_PDFS,
-    name: 'Report PDFs',
-    extensions: ['pdf'],
+    name: isFreePlanMode ? 'MSME Pilot Uploads' : 'Invoice Images',
+    extensions: ['jpg', 'jpeg', 'png', 'webp', 'pdf', 'svg'],
     maxSize: 25 * 1024 * 1024,
   },
 ];
@@ -754,7 +738,7 @@ async function ensureBucket(storage, bucket) {
     } catch (createError) {
       if (!isBucketPlanLimit(createError)) throw createError;
       console.warn(
-        `[bucket] ${bucket.id} not created: Appwrite plan bucket limit reached. Upgrade the plan or create this bucket later.`,
+        `[bucket] ${bucket.id} not created: Appwrite plan bucket limit reached. On Appwrite Free, keep only invoice_images or set APPWRITE_FREE_PLAN=true.`,
       );
       summary.bucketsFailed += 1;
     }
@@ -790,7 +774,15 @@ async function main() {
   }
 
   console.log('\n[storage] Buckets');
-  for (const bucket of bucketSchemas) {
+  if (isFreePlanMode) {
+    console.log('[storage] Appwrite Free plan mode: using one shared private bucket (invoice_images).');
+  }
+
+  const uniqueBuckets = Array.from(
+    new Map(bucketSchemas.map((bucket) => [bucket.id, bucket])).values(),
+  );
+
+  for (const bucket of uniqueBuckets) {
     await ensureBucket(storage, bucket);
   }
 

@@ -104,8 +104,10 @@ name.
 ## Product Images
 
 Product image upload is still visual-only in Prompt 19. Real storage upload to
-`product_images` should be added after bucket availability and file permissions
-are confirmed.
+dedicated `product_images` should wait until the project upgrades from Appwrite
+Free. For now `BUCKET_IDS.PRODUCT_IMAGES` maps to the shared private
+`invoice_images` bucket, and the UI should remain safe if product image upload is
+kept local/preview-only.
 
 ## Troubleshooting
 

@@ -1,7 +1,9 @@
 import { DATABASE_ID, COLLECTION_IDS } from '../config/appwriteSchema.js';
-import { databases, ID, Permission, Query, Role } from '../lib/appwrite.js';
+import { databases, ID, Query } from '../lib/appwrite.js';
+import { userDocumentPermissions } from '../utils/appwritePermissions.js';
 import { createFriendlyAppwriteError } from '../utils/appwriteErrors.js';
 import { getStockStatus } from '../utils/formatters.js';
+import { assertOwnsDocument } from '../utils/ownership.js';
 import {
   calculateDueAmount,
   calculateSaleGstAmount,
@@ -58,9 +60,7 @@ function toInputDate(value) {
 }
 
 function assertSaleOwner(sale, userId) {
-  if (!sale || sale.userId !== userId) {
-    throw new Error('Permission error. Sale does not belong to the current user.');
-  }
+  return assertOwnsDocument(sale, userId, 'Sale');
 }
 
 function toSaleRecord(document, items = []) {
@@ -123,9 +123,7 @@ async function getProductForSale(userId, productId) {
     productId,
   );
 
-  if (product.userId !== userId) {
-    throw new Error('Permission error. Product does not belong to the current user.');
-  }
+  assertOwnsDocument(product, userId, 'Product');
 
   return product;
 }
@@ -317,11 +315,7 @@ export async function createSale(userId, saleData) {
       COLLECTION_IDS.SALES,
       ID.unique(),
       saleDocument,
-      [
-        Permission.read(Role.user(userId)),
-        Permission.update(Role.user(userId)),
-        Permission.delete(Role.user(userId)),
-      ],
+      userDocumentPermissions(userId),
     );
 
     try {

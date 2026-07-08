@@ -196,43 +196,35 @@ Indexes: `userId_index`, `reportType_index`, `period_index`, `status_index`, `ge
 
 ## Storage Buckets
 
-If Appwrite reports that the maximum number of buckets for the selected plan has
-been reached, the setup script will keep the database schema intact, create/skip
-whatever buckets are allowed, and mark the rest as failed in the summary. Upgrade
-the Appwrite plan or create the remaining buckets later before wiring real file
-uploads.
+MSME Pilot is currently configured for Appwrite Cloud Free plan, which uses one
+real private bucket:
 
 ### invoice_images
 
-Purpose: Stores uploaded invoice images and invoice PDF files.
+Purpose: Stores uploaded invoice images, invoice PDF files, and any future
+demo-safe uploads that need a private shared bucket.
 
-Allowed extensions: `jpg`, `jpeg`, `png`, `webp`, `pdf`.
-
-Security: private, file-level security enabled.
-
-### product_images
-
-Purpose: Stores product photos.
-
-Allowed extensions: `jpg`, `jpeg`, `png`, `webp`.
+Allowed extensions for new setup: `jpg`, `jpeg`, `png`, `webp`, `pdf`, `svg`.
 
 Security: private, file-level security enabled.
 
-### company_logos
+### Free-plan bucket mapping
 
-Purpose: Stores business logo files.
+In `src/config/appwriteSchema.js`, all bucket IDs map to `invoice_images`:
 
-Allowed extensions: `jpg`, `jpeg`, `png`, `webp`, `svg`.
+```js
+INVOICE_IMAGES: 'invoice_images'
+PRODUCT_IMAGES: 'invoice_images'
+COMPANY_LOGOS: 'invoice_images'
+REPORT_PDFS: 'invoice_images'
+```
 
-Security: private, file-level security enabled.
+Invoice upload continues to use `invoice_images`. Product image upload and
+company logo upload should remain local/preview-only unless a dedicated upload
+service is added later. Report PDF export remains simulated for now.
 
-### report_pdfs
-
-Purpose: Stores generated PDF reports.
-
-Allowed extensions: `pdf`.
-
-Security: private, file-level security enabled.
+If the project upgrades from Appwrite Free later, dedicated buckets can be added
+again without changing collection schema.
 
 ## Setup Script Behavior
 
@@ -247,7 +239,7 @@ Security: private, file-level security enabled.
 - Creates attributes if missing.
 - Polls attributes until available before creating indexes.
 - Creates indexes if missing.
-- Creates storage buckets if missing.
+- Creates the shared `invoice_images` bucket if missing.
 - Prints a final summary.
 
 ## Next Step

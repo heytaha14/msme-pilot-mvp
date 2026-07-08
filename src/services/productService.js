@@ -1,7 +1,9 @@
 import { DATABASE_ID, COLLECTION_IDS } from '../config/appwriteSchema.js';
-import { databases, ID, Permission, Query, Role } from '../lib/appwrite.js';
+import { databases, ID, Query } from '../lib/appwrite.js';
+import { userDocumentPermissions } from '../utils/appwritePermissions.js';
 import { createFriendlyAppwriteError } from '../utils/appwriteErrors.js';
 import { calculateProductValue, getStockStatus } from '../utils/formatters.js';
+import { assertOwnsDocument } from '../utils/ownership.js';
 import { createInventoryMovement } from './inventoryMovementService.js';
 
 const allowedProductFields = [
@@ -99,12 +101,6 @@ function pickAllowedFields(productData) {
   }, {});
 }
 
-function assertProductOwner(product, userId) {
-  if (!product || product.userId !== userId) {
-    throw new Error('Permission error. Product does not belong to the current user.');
-  }
-}
-
 export async function listProducts(userId, options = {}) {
   try {
     const response = await databases.listDocuments(
@@ -155,11 +151,7 @@ export async function createProduct(userId, productData) {
       COLLECTION_IDS.PRODUCTS,
       ID.unique(),
       document,
-      [
-        Permission.read(Role.user(userId)),
-        Permission.update(Role.user(userId)),
-        Permission.delete(Role.user(userId)),
-      ],
+      userDocumentPermissions(userId),
     );
 
     await createInventoryMovement(userId, {
@@ -191,7 +183,7 @@ export async function updateProduct(userId, productId, productData) {
       productId,
     );
 
-    assertProductOwner(existingProduct, userId);
+    assertOwnsDocument(existingProduct, userId, 'Product');
 
     const normalized = toAppwriteProductDocument(productData);
     const updateDocument = {
@@ -237,7 +229,7 @@ export async function deleteProduct(userId, productId) {
       productId,
     );
 
-    assertProductOwner(existingProduct, userId);
+    assertOwnsDocument(existingProduct, userId, 'Product');
 
     if (Number(existingProduct.stock || 0) > 0) {
       await createInventoryMovement(userId, {
