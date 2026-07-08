@@ -60,6 +60,7 @@ import {
   getOcrConfidenceLevel,
 } from '../../utils/formatters.js';
 import { getAiSourceLabel } from '../../utils/aiErrors.js';
+import { parseInvoiceText } from '../../utils/invoiceTextParser.js';
 
 const statusFilters = [
   'All Invoices',
@@ -862,7 +863,7 @@ function ApproveInvoiceModal({ invoice, loading, onCancel, onConfirm }) {
           Approve this invoice?
         </h2>
         <p className="mt-2 text-sm leading-6 text-slate-500">
-          This will mark {invoice.invoiceNumber} as approved. Inventory update automation remains simulated for now.
+          This will mark {invoice.invoiceNumber} as approved, increase inventory stock, and update the supplier ledger.
         </p>
         <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
           <Button onClick={onCancel} rounded="2xl" variant="secondary">Cancel</Button>
@@ -1128,7 +1129,10 @@ export default function InvoicesPage() {
     });
 
     try {
-      const result = await parseInvoiceWithAi(invoice.id);
+      const result = await parseInvoiceWithAi(invoice.id, {
+        force: true,
+        forceReplaceItems: true,
+      });
       const refreshed = await getPurchaseInvoiceWithItems(user.$id, invoice.id);
       setFeedback({
         message: result.needsManualReview
@@ -1139,6 +1143,46 @@ export default function InvoicesPage() {
       setModalState({ type: 'view', invoice: refreshed });
       await loadInvoices();
     } catch (error) {
+      if (invoice.extractedText) {
+        try {
+          const parsed = parseInvoiceText(invoice.extractedText);
+          await updatePurchaseInvoice(user.$id, invoice.id, {
+            supplierName: parsed.supplierName || invoice.supplierName,
+            supplierPhone: parsed.supplierPhone || invoice.supplierPhone,
+            invoiceNumber: parsed.invoiceNumber || invoice.invoiceNumber,
+            invoiceDate: parsed.invoiceDate || invoice.invoiceDate,
+            subtotal: parsed.subtotal || invoice.subtotal,
+            gstAmount: parsed.gstAmount || invoice.gstAmount,
+            totalAmount: parsed.totalAmount || invoice.totalAmount,
+            status: 'Pending Review',
+            aiExtractedJson: JSON.stringify({
+              source: 'tesseract_local_ocr',
+              parser: 'local_rule_based_parser',
+              warnings: parsed.warnings || [],
+              parsedAt: new Date().toISOString(),
+              parsedData: parsed,
+              aiError: error.message || 'AI function unavailable.',
+            }),
+          });
+          await deleteInvoiceItemsForInvoice(user.$id, invoice.id);
+          await Promise.all(
+            (parsed.items || [])
+              .filter((item) => item.productName)
+              .map((item) => createInvoiceItem(user.$id, invoice.id, item)),
+          );
+          const refreshed = await getPurchaseInvoiceWithItems(user.$id, invoice.id);
+          setFeedback({
+            message: 'AI is unavailable, so OCR text was re-parsed locally. Review items before approval.',
+            tone: 'warning',
+          });
+          setModalState({ type: 'view', invoice: refreshed });
+          await loadInvoices();
+          return;
+        } catch {
+          // Continue to the AI error below so the user sees the original backend issue.
+        }
+      }
+
       setFeedback({
         message: error.message || 'AI could not parse this invoice. Try again or review manually.',
         tone: 'danger',
@@ -1153,8 +1197,14 @@ export default function InvoicesPage() {
 
     setActionLoading('approve');
     try {
-      await approvePurchaseInvoice(user.$id, modalState.invoice.id);
-      setFeedback({ message: 'Invoice approved.', tone: 'success' });
+      const approved = await approvePurchaseInvoice(user.$id, modalState.invoice.id);
+      const result = approved.inventoryUpdateResult;
+      setFeedback({
+        message: result
+          ? `Invoice approved. ${result.updatedCount} products updated and ${result.createdCount} products created.`
+          : 'Invoice approved and inventory updated.',
+        tone: 'success',
+      });
       setModalState({ type: null, invoice: null });
       await loadInvoices();
     } catch (error) {

@@ -406,7 +406,7 @@ function AiPanel({ ai, onChange, onSave, onToggle }) {
   return (
     <PanelShell
       icon={Bot}
-      subtitle="Control the assistant behavior and which demo business context it can use."
+      subtitle="Control assistant behavior and which business context it can use."
       title="AI Assistant Settings"
     >
       <FieldGrid>
@@ -419,8 +419,8 @@ function AiPanel({ ai, onChange, onSave, onToggle }) {
         ))}
       </div>
       <div className="mt-5 rounded-2xl bg-cyan-50 p-4 text-sm leading-6 text-cyan-800">
-        Real AI will be connected later through secure Appwrite Functions. API keys
-        must never be exposed in the frontend.
+        AI requests run through secure Appwrite Functions. Provider keys must
+        never be exposed in the frontend.
       </div>
       <SectionSave onSave={onSave} />
     </PanelShell>
@@ -431,7 +431,7 @@ function SecurityPanel({ onAction, onChange, onSave, settings }) {
   return (
     <PanelShell
       icon={ShieldCheck}
-      subtitle="Security controls are visual only until real authentication is connected."
+      subtitle="Review account security controls connected to your Appwrite session."
       title="Security Settings"
     >
       <div className="grid gap-4 md:grid-cols-2">
@@ -791,8 +791,8 @@ export default function SettingsPage() {
           <div>
             <Badge className="bg-white/10 text-cyan-100 ring-white/20">AI Setup Insight</Badge>
             <p className="mt-3 max-w-3xl text-lg font-bold leading-7 text-white">
-              Your settings are optimized for demo mode. Connect Appwrite, OCR,
-              and secure AI functions later to enable real automation.
+              Appwrite auth and data modules are connected. External delivery,
+              exports, payments, and destructive actions remain protected until production setup is complete.
             </p>
           </div>
           <Button
@@ -836,13 +836,13 @@ export default function SettingsPage() {
       />
 
       <SectionHeader
-        subtitle="All actions are local simulations until Appwrite, OCR, AI functions, and production infrastructure are connected."
-        title="Demo Safety"
+        subtitle="Backend modules are being connected in phases. High-risk actions stay disabled until production setup is complete."
+        title="Production Safety"
       />
       <Card className="border-cyan-100 bg-cyan-50/80" padding="sm">
         <p className="text-sm font-semibold leading-6 text-cyan-800">
-          No real authentication, notification delivery, exports, backups, payments,
-          invoices, or destructive workspace actions are performed from this page.
+          Authentication and core Appwrite data are active. Notification delivery,
+          exports, backups, payments, and destructive workspace actions are still guarded.
         </p>
       </Card>
 

@@ -19,10 +19,28 @@ export function parseFunctionExecutionResponse(execution) {
 
   if (execution.status === 'failed' || execution.responseStatusCode >= 400 || payload?.success === false) {
     const error = payload?.error || {};
-    throw new Error(error.message || 'AI function execution failed.');
+    const details = execution.errors || execution.logs || '';
+    throw new Error(error.message || details || 'AI function execution failed before reaching OpenRouter.');
   }
 
-  return payload;
+  const data = payload?.data || payload?.result || payload;
+  const parsed = data?.parsed || data?.aiResult || data?.invoice || payload?.parsed;
+
+  if (!parsed && !data?.itemsCreated && !data?.invoiceId) {
+    throw new Error(
+      'AI invoice function returned success but no parsed invoice data. Open the latest Appwrite execution response body/logs and redeploy the current function code.',
+    );
+  }
+
+  return {
+    ...payload,
+    ...data,
+    parsed,
+    invoiceId: data?.invoiceId || payload?.invoiceId || '',
+    itemsCreated: Number(data?.itemsCreated || payload?.itemsCreated || 0),
+    needsManualReview: Boolean(data?.needsManualReview || payload?.needsManualReview),
+    warnings: data?.warnings || payload?.warnings || [],
+  };
 }
 
 export async function parseInvoiceWithAi(invoiceId, options = {}) {
@@ -51,6 +69,9 @@ export async function parseInvoiceWithAi(invoiceId, options = {}) {
 
     return parseFunctionExecutionResponse(execution);
   } catch (error) {
+    if (import.meta.env.DEV) {
+      console.warn('AI invoice function execution failed:', error);
+    }
     throw new Error(getAiInvoiceErrorMessage(error));
   }
 }

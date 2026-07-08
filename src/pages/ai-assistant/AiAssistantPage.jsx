@@ -72,6 +72,64 @@ const toolCards = [
   ['Customer Insights', 'Spot loyal customers and pending dues.', Users],
 ];
 
+function getLocalAssistantFallback(prompt, context, errorMessage = '') {
+  const text = String(prompt || '').toLowerCase();
+  const prefix =
+    'Server AI returned an incomplete response, so this answer is generated locally from your current Appwrite business data. ';
+
+  if (text.includes('stock') || text.includes('reorder') || text.includes('inventory')) {
+    return {
+      content: `${prefix}You currently have ${context.lowStockCount} low-stock items and an inventory value of ${formatCurrency(context.inventoryValue)}. Review Inventory and prioritize products below minimum stock before approving more sales.`,
+      actions: [
+        { title: 'Open Inventory', reason: 'Review low-stock products and reorder quantities.', priority: 'High', routeTarget: '/inventory' },
+      ],
+    };
+  }
+
+  if (text.includes('payment') || text.includes('dues') || text.includes('pending')) {
+    return {
+      content: `${prefix}Customer dues are ${formatCurrency(context.pendingDues)} and supplier dues are ${formatCurrency(context.supplierDues)}. Focus first on the largest customer dues, then plan supplier payments so restocking is not delayed.`,
+      actions: [
+        { title: 'Recover customer dues', reason: 'Follow up with customers that have pending balances.', priority: 'High', routeTarget: '/customers' },
+      ],
+    };
+  }
+
+  if (text.includes('sales') || text.includes('revenue') || text.includes('profit')) {
+    return {
+      content: `${prefix}Monthly revenue is ${formatCurrency(context.monthlyRevenue)} with estimated profit of ${formatCurrency(context.monthlyProfit)}. Use Sales and Reports to confirm which products are driving margin.`,
+      actions: [
+        { title: 'Review sales report', reason: 'Compare revenue, profit, and fast-moving products.', priority: 'Medium', routeTarget: '/reports' },
+      ],
+    };
+  }
+
+  if (text.includes('health') || text.includes('score')) {
+    return {
+      content: `${prefix}Your latest saved health score is ${context.healthScore || 'not calculated yet'}. Recalculate Business Health after adding products, customers, sales, invoices, and supplier records for a more accurate score.`,
+      actions: [
+        { title: 'Recalculate score', reason: 'Refresh the score from current Appwrite records.', priority: 'Medium', routeTarget: '/business-health' },
+      ],
+    };
+  }
+
+  if (text.includes('invoice')) {
+    return {
+      content: `${prefix}You have ${context.pendingInvoices} purchase invoice(s) pending review. Approve verified invoices to update inventory stock and supplier purchase dues.`,
+      actions: [
+        { title: 'Review invoices', reason: 'Check extracted items before approving inventory updates.', priority: 'High', routeTarget: '/invoices' },
+      ],
+    };
+  }
+
+  return {
+    content: `${prefix}Current snapshot: ${context.lowStockCount} low-stock items, ${formatCurrency(context.pendingDues)} customer dues, ${formatCurrency(context.supplierDues)} supplier dues, ${formatCurrency(context.monthlyRevenue)} monthly revenue, and health score ${context.healthScore || 'not calculated yet'}. ${errorMessage ? `Backend note: ${errorMessage}` : ''}`.trim(),
+    actions: [
+      { title: 'Fix server AI deployment', reason: 'Open the latest Appwrite execution body/logs and redeploy the current function.', priority: 'High' },
+    ],
+  };
+}
+
 function DemoModeNotice() {
   return (
     <div className="rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-700">
@@ -559,13 +617,22 @@ export default function AiAssistantPage() {
       ]);
       loadConversations();
     } catch (error) {
+      const fallback = getLocalAssistantFallback(prompt, context, error.message);
       setMessages((current) => [
         ...current,
         {
-          id: `error-${Date.now()}`,
+          id: `fallback-${Date.now()}`,
           role: 'assistant',
-          content: error.message || 'AI Assistant is temporarily unavailable. Please try again.',
-          error: true,
+          content: fallback.content,
+          suggestedActions: fallback.actions,
+          relatedMetrics: [
+            { label: 'Low stock', value: String(context.lowStockCount) },
+            { label: 'Customer dues', value: formatCurrency(context.pendingDues) },
+            { label: 'Monthly revenue', value: formatCurrency(context.monthlyRevenue) },
+          ],
+          warnings: [
+            error.message || 'Server AI is unavailable. Local business-context fallback was used.',
+          ],
         },
       ]);
     } finally {

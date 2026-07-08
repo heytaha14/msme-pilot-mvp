@@ -21,10 +21,31 @@ export function parseAiAssistantExecutionResponse(execution) {
 
   if (execution.status === 'failed' || execution.responseStatusCode >= 400 || payload?.success === false) {
     const error = payload?.error || {};
-    throw new Error(error.message || 'AI Assistant function execution failed.');
+    const details = execution.errors || execution.logs || '';
+    throw new Error(error.message || details || 'AI Assistant function execution failed before reaching OpenRouter.');
   }
 
-  return payload;
+  const data = payload?.data || payload?.result || payload?.assistant || payload?.response || payload;
+  const answer = typeof data === 'string'
+    ? data
+    : data?.answer || data?.message || data?.content || data?.reply || '';
+
+  if (!String(answer || '').trim()) {
+    throw new Error(
+      'AI Assistant function returned success but no answer. Open the latest Appwrite execution response body/logs and redeploy the current function code.',
+    );
+  }
+
+  return {
+    ...payload,
+    ...data,
+    answer: String(answer).trim(),
+    suggestedActions: data?.suggestedActions || payload?.suggestedActions || [],
+    relatedMetrics: data?.relatedMetrics || payload?.relatedMetrics || [],
+    warnings: data?.warnings || payload?.warnings || [],
+    conversationId: data?.conversationId || payload?.conversationId || '',
+    assistantMessageId: data?.assistantMessageId || payload?.assistantMessageId || '',
+  };
 }
 
 export async function sendBusinessAiMessage(message, options = {}) {
@@ -63,6 +84,9 @@ export async function sendBusinessAiMessage(message, options = {}) {
 
     return parseAiAssistantExecutionResponse(execution);
   } catch (error) {
+    if (import.meta.env.DEV) {
+      console.warn('AI Assistant function execution failed:', error);
+    }
     throw new Error(getAiAssistantErrorMessage(error));
   }
 }

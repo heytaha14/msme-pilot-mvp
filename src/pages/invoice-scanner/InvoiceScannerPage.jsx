@@ -240,7 +240,7 @@ function InvoiceUploadCard({ file, onFileChange, onStartScan, scanState }) {
         </Button>
 
         <p className="mt-4 text-xs font-semibold text-slate-400">
-          OCR runs locally in your browser. AI parsing comes in Prompt 24.
+          OCR runs locally first. AI parsing runs through your secure Appwrite Function.
         </p>
       </div>
 
@@ -501,7 +501,7 @@ function AiExtractionPanel({ invoice }) {
   if (!invoice) {
     return null;
   }
-  const isAiParsed = invoice.ocrSource === 'openai_appwrite_function';
+  const isAiParsed = ['openai_appwrite_function', 'openrouter_appwrite_function'].includes(invoice.ocrSource);
 
   return (
     <Card>
@@ -611,10 +611,10 @@ function InventoryUpdatePreview({ invoice }) {
         </div>
         <div>
           <h2 className="text-xl font-black text-slate-950">
-            Simulated inventory update preview
+            Inventory update preview
           </h2>
           <p className="mt-1 text-sm text-slate-500">
-            {invoice.items.length || 0} parsed products can be reviewed before automation.
+            {invoice.items.length || 0} parsed products will update stock after approval.
           </p>
         </div>
       </div>
@@ -1222,6 +1222,7 @@ export default function InvoiceScannerPage() {
     }
 
     let uploadedFile = null;
+    let uploadWarning = '';
     setExtractedInvoice(null);
     setSavedInvoice(null);
     setOcrMeta({
@@ -1240,20 +1241,33 @@ export default function InvoiceScannerPage() {
 
     try {
       setActionLoading('upload');
-      uploadedFile = await uploadInvoiceFile(user.$id, selectedFile);
+      try {
+        uploadedFile = await uploadInvoiceFile(user.$id, selectedFile);
+      } catch (uploadError) {
+        uploadWarning = uploadError.message || 'Invoice file upload failed.';
+      }
       setScanState((current) => ({
         ...current,
         stepIndex: 1,
         progress: 18,
+        error: uploadWarning
+          ? `${uploadWarning} OCR will continue and save the invoice without a file attachment.`
+          : '',
       }));
       setOcrMeta((current) => ({
         ...current,
-        engineStatus: 'Uploaded',
+        engineStatus: uploadedFile ? 'Uploaded' : 'Upload skipped',
         currentStep: 'Preparing OCR engine',
         progress: 18,
       }));
 
       if (!isOcrSupportedFile(selectedFile)) {
+        if (!uploadedFile) {
+          throw new Error(
+            `${uploadWarning || 'Invoice file upload failed.'} PDF files cannot be OCR-processed in the browser yet.`,
+          );
+        }
+
         const parsed = {
           supplierName: 'Unknown Supplier',
           supplierPhone: '',
@@ -1285,9 +1299,9 @@ export default function InvoiceScannerPage() {
             inventoryUpdated: false,
             extractedText: '',
             aiExtractedJson: JSON.stringify(metadata),
-            fileId: uploadedFile.$id,
-            fileName: uploadedFile.name || selectedFile.name,
-            fileType: uploadedFile.mimeType || selectedFile.type,
+            fileId: uploadedFile?.$id || '',
+            fileName: uploadedFile?.name || selectedFile.name,
+            fileType: uploadedFile?.mimeType || selectedFile.type,
           },
           [],
         );
@@ -1296,9 +1310,9 @@ export default function InvoiceScannerPage() {
           ...buildScannerInvoiceFromParsed(parsed, '', null, 'Uploaded'),
           id: createdInvoice.id,
           invoiceNumber: createdInvoice.invoiceNumber,
-          fileId: uploadedFile.$id,
-          fileName: uploadedFile.name || selectedFile.name,
-          fileType: uploadedFile.mimeType || selectedFile.type,
+          fileId: uploadedFile?.$id || '',
+          fileName: uploadedFile?.name || selectedFile.name,
+          fileType: uploadedFile?.mimeType || selectedFile.type,
           warnings: parsed.warnings,
           ocrSource: 'upload_only_pdf',
         };
@@ -1310,8 +1324,9 @@ export default function InvoiceScannerPage() {
           stepIndex: 1,
           progress: 100,
           error: '',
-          successMessage:
-            'Invoice file uploaded and saved. Browser OCR currently supports JPG, PNG, and WEBP images.',
+          successMessage: uploadWarning
+            ? 'Invoice record saved without file attachment. Browser OCR currently supports JPG, PNG, and WEBP images.'
+            : 'Invoice file uploaded and saved. Browser OCR currently supports JPG, PNG, and WEBP images.',
         });
         setOcrMeta({
           ...initialOcrMeta,
@@ -1378,9 +1393,9 @@ export default function InvoiceScannerPage() {
           inventoryUpdated: false,
           extractedText: ocrResult.normalizedText,
           aiExtractedJson: JSON.stringify(metadata),
-          fileId: uploadedFile.$id,
-          fileName: uploadedFile.name || selectedFile.name,
-          fileType: uploadedFile.mimeType || selectedFile.type,
+          fileId: uploadedFile?.$id || '',
+          fileName: uploadedFile?.name || selectedFile.name,
+          fileType: uploadedFile?.mimeType || selectedFile.type,
         },
         parsedInvoice.items,
       );
@@ -1391,16 +1406,18 @@ export default function InvoiceScannerPage() {
         id: createdInvoice.id,
         invoiceNumber: createdInvoice.invoiceNumber,
         status: 'Pending Review',
-        fileId: uploadedFile.$id,
-        fileName: uploadedFile.name || selectedFile.name,
-        fileType: uploadedFile.mimeType || selectedFile.type,
+        fileId: uploadedFile?.$id || '',
+        fileName: uploadedFile?.name || selectedFile.name,
+        fileType: uploadedFile?.mimeType || selectedFile.type,
       });
       setScanState({
         status: 'extracted',
         stepIndex: ocrScanSteps.length - 1,
         progress: 100,
         error: '',
-        successMessage: 'Invoice uploaded and saved for review in Appwrite.',
+        successMessage: uploadWarning
+          ? 'OCR completed and invoice data saved. File attachment upload failed, but review and approval can continue.'
+          : 'Invoice uploaded and saved for review in Appwrite.',
       });
       setOcrMeta({
         engineStatus: 'Completed',
@@ -1410,6 +1427,7 @@ export default function InvoiceScannerPage() {
         confidence: ocrResult.confidence,
       });
       await loadRecentScans();
+      await runAiParseForInvoice(createdInvoice.id, { auto: true });
     } catch (error) {
       if (uploadedFile?.$id && selectedFile) {
         try {
@@ -1492,12 +1510,12 @@ export default function InvoiceScannerPage() {
     try {
       const approvedInvoice = await approvePurchaseInvoice(user.$id, savedInvoice.id);
       setSavedInvoice(approvedInvoice);
-      setExtractedInvoice((current) => ({ ...current, status: 'Approved' }));
+      setExtractedInvoice(toScannerInvoice(approvedInvoice));
       setScanState((current) => ({
         ...current,
         status: 'approved',
         successMessage:
-          'Invoice approved and saved. Inventory update automation comes after OCR/AI integration.',
+          'Invoice approved. Inventory stock and supplier purchase data were updated.',
       }));
       await loadRecentScans();
     } catch (error) {
@@ -1510,8 +1528,7 @@ export default function InvoiceScannerPage() {
     }
   }
 
-  async function parseCurrentInvoiceWithAi() {
-    const invoiceId = savedInvoice?.id || extractedInvoice?.id;
+  async function runAiParseForInvoice(invoiceId, options = {}) {
     if (!user?.$id || !invoiceId) {
       setScanState((current) => ({
         ...current,
@@ -1524,11 +1541,16 @@ export default function InvoiceScannerPage() {
     setScanState((current) => ({
       ...current,
       error: '',
-      successMessage: 'AI is understanding supplier, GST, totals, and items...',
+      successMessage: options.auto
+        ? 'OCR saved. AI is now understanding supplier, GST, totals, and items...'
+        : 'AI is understanding supplier, GST, totals, and items...',
     }));
 
     try {
-      const result = await parseInvoiceWithAi(invoiceId);
+      const result = await parseInvoiceWithAi(invoiceId, {
+        force: Boolean(options.force),
+        forceReplaceItems: true,
+      });
       const refreshedInvoice = await getPurchaseInvoiceWithItems(user.$id, invoiceId);
       setSavedInvoice(refreshedInvoice);
       setExtractedInvoice(toScannerInvoice(refreshedInvoice));
@@ -1543,12 +1565,19 @@ export default function InvoiceScannerPage() {
     } catch (error) {
       setScanState((current) => ({
         ...current,
-        error: error.message || 'AI parser unavailable. Using local OCR parser for now.',
-        successMessage: '',
+        error: options.auto
+          ? `Local OCR data was saved, but AI parsing did not run: ${error.message || 'AI parser unavailable.'}`
+          : error.message || 'AI parser unavailable. Using local OCR parser for now.',
+        successMessage: options.auto ? 'You can still review and approve the OCR result manually.' : '',
       }));
     } finally {
       setActionLoading('');
     }
+  }
+
+  async function parseCurrentInvoiceWithAi() {
+    const invoiceId = savedInvoice?.id || extractedInvoice?.id;
+    await runAiParseForInvoice(invoiceId, { force: true });
   }
 
   async function resetScanner() {
@@ -1644,8 +1673,8 @@ export default function InvoiceScannerPage() {
         </div>
       </Card>
 
-      <section className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-        <div className="space-y-6">
+      <section className="relative z-0 grid min-w-0 gap-6 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+        <div className="min-w-0 space-y-6">
           <InvoiceUploadCard
             file={selectedFile}
             onFileChange={handleFileChange}
@@ -1661,7 +1690,7 @@ export default function InvoiceScannerPage() {
           <OcrTipsCard />
         </div>
 
-        <div className="space-y-6">
+        <div className="min-w-0 space-y-6">
           {!selectedFile && !extractedInvoice ? (
             <Card className="text-center" padding="lg">
               <FileScan className="mx-auto h-12 w-12 text-indigo-500" />
@@ -1679,7 +1708,7 @@ export default function InvoiceScannerPage() {
           <OcrWarningsCard warnings={extractedInvoice?.warnings || []} />
           <OcrTextPanel invoice={extractedInvoice} />
           <AiExtractionPanel invoice={extractedInvoice} />
-          <div className="grid gap-6 lg:grid-cols-2 xl:grid-cols-1">
+          <div className="grid min-w-0 gap-6 lg:grid-cols-2 xl:grid-cols-1">
             <InventoryUpdatePreview invoice={extractedInvoice} />
             <SupplierUpdatePreview invoice={extractedInvoice} />
           </div>
@@ -1695,7 +1724,7 @@ export default function InvoiceScannerPage() {
         </div>
       </section>
 
-      <section className="space-y-4">
+      <section className="relative z-0 space-y-4">
         <SectionHeader
           subtitle="Recent scanned invoices saved in Appwrite for review workflows."
           title="Recent Scanned Invoices"
@@ -1740,7 +1769,7 @@ export default function InvoiceScannerPage() {
             setExtractedInvoice(invoice);
             if (savedInvoice && user?.$id) {
               try {
-                const updatedInvoice = await updatePurchaseInvoice(user.$id, savedInvoice.id, {
+                await updatePurchaseInvoice(user.$id, savedInvoice.id, {
                   supplierName: invoice.supplierName,
                   supplierPhone: invoice.supplierPhone,
                   invoiceNumber: invoice.invoiceNumber,
@@ -1760,7 +1789,9 @@ export default function InvoiceScannerPage() {
                     .filter((item) => item.productName)
                     .map((item) => createInvoiceItem(user.$id, savedInvoice.id, item)),
                 );
-                setSavedInvoice(updatedInvoice);
+                const refreshedInvoice = await getPurchaseInvoiceWithItems(user.$id, savedInvoice.id);
+                setSavedInvoice(refreshedInvoice);
+                setExtractedInvoice(toScannerInvoice(refreshedInvoice));
                 await loadRecentScans();
               } catch (error) {
                 setScanState((current) => ({

@@ -129,6 +129,22 @@ export function extractLineItems(text = '') {
 
   return itemLines
     .map((line) => {
+      const tableRowMatch = line.match(
+        /^\s*\d+\s+(.+?)\s+(\d+(?:\.\d+)?)\s*(bags?|kg|pcs?|packs?|bottles?|ltr|litre|liters?)\s+([0-9][0-9,.]*)\s+(\d+(?:\.\d+)?)\s*%?\s+([0-9][0-9,.]*)\s*$/i,
+      );
+
+      if (tableRowMatch) {
+        const [, productName, quantity, unit, , gstPercentage, amount] = tableRowMatch;
+        return {
+          productName: productName.trim(),
+          quantity: Number(quantity),
+          unit,
+          amount: parseCurrencyValue(amount),
+          gstPercentage: Number(gstPercentage),
+          inventoryAction: `Increase stock by ${Number(quantity)}`,
+        };
+      }
+
       const gstMatch = line.match(/(\d+(?:\.\d+)?)\s*%/);
       const explicitAmountMatches = [...line.matchAll(/(?:rs\.?|inr)\s*([0-9][0-9,.]*)/gi)].map((match) =>
         parseCurrencyValue(match[1]),
@@ -139,6 +155,8 @@ export function extractLineItems(text = '') {
       const quantityMatch = line.match(/(\d+(?:\.\d+)?)\s*(bags?|kg|pcs?|packs?|bottles?|ltr|litre|liters?)\b/i);
       const productName = line
         .replace(/(?:rs\.?|inr)\s*[0-9][0-9,.]*/gi, '')
+        .replace(/^\s*\d+\s+/, '')
+        .replace(/\b\d+(?:\.\d+)?\s*%/g, '')
         .replace(/gst\s*\d+(?:\.\d+)?\s*%?/gi, '')
         .replace(/\d+(?:\.\d+)?\s*(bags?|kg|pcs?|packs?|bottles?|ltr|litre|liters?)\b/gi, '')
         .replace(/\b[0-9][0-9,.]{2,}\b/g, '')

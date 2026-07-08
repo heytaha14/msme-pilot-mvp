@@ -7,6 +7,10 @@ export function getAiInvoiceErrorMessage(error) {
     return 'AI invoice function is not configured. Add VITE_APPWRITE_PARSE_INVOICE_FUNCTION_ID.';
   }
 
+  if (message.includes('returned success but no parsed invoice data')) {
+    return 'AI invoice function executed but returned no parsed invoice data. Open the latest Appwrite execution response body/logs and redeploy the current function code.';
+  }
+
   if (message.includes('no ocr text') || type.includes('ocr_text_missing')) {
     return 'This invoice has no OCR text. Run OCR first.';
   }
@@ -21,6 +25,14 @@ export function getAiInvoiceErrorMessage(error) {
 
   if (statusCode === 403 || message.includes('permission') || message.includes('own invoices')) {
     return 'Permission error. You can only parse your own invoices.';
+  }
+
+  if (message.includes('openrouter') && (message.includes('key') || message.includes('auth'))) {
+    return 'AI invoice parsing is not fully configured. Add the server-side OpenRouter key in the Appwrite Function environment.';
+  }
+
+  if (message.includes('appwrite_api_key') || message.includes('missing required environment variable')) {
+    return 'AI invoice backend is missing server-side Appwrite environment variables.';
   }
 
   if (message.includes('model') || type.includes('model')) {
@@ -45,6 +57,10 @@ export function getAiAssistantErrorMessage(error) {
 
   if (message.includes('not configured') || message.includes('function id')) {
     return 'AI Assistant function is not configured. Add VITE_APPWRITE_AI_ASSISTANT_FUNCTION_ID.';
+  }
+
+  if (message.includes('returned success but no answer')) {
+    return 'AI Assistant function executed but returned no answer. Open the latest Appwrite execution response body/logs and redeploy the current function code.';
   }
 
   if (statusCode === 401 || message.includes('authenticated') || message.includes('jwt')) {
