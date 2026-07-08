@@ -607,9 +607,10 @@ export default function BusinessHealthPage() {
               <div className="flex gap-3">
                 <Activity className="mt-1 h-5 w-5 shrink-0 text-indigo-700" />
                 <div>
-                  <p className="font-black text-indigo-900">Setup-focused score</p>
+                  <p className="font-black text-indigo-900">Not enough real business data yet</p>
                   <p className="mt-1 text-sm font-semibold leading-6 text-indigo-800">
-                    Add products, customers, suppliers, sales, and invoices to make the score more meaningful.
+                    Add or approve real products, customers, suppliers, sales, and invoices.
+                    The score is calculated from Appwrite records only.
                   </p>
                 </div>
               </div>

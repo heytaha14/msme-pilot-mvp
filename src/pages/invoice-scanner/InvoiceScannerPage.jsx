@@ -1673,7 +1673,7 @@ export default function InvoiceScannerPage() {
         </div>
       </Card>
 
-      <section className="relative z-0 grid min-w-0 gap-6 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
+      <section className="relative z-0 grid min-w-0 gap-6">
         <div className="min-w-0 space-y-6">
           <InvoiceUploadCard
             file={selectedFile}
@@ -1708,7 +1708,7 @@ export default function InvoiceScannerPage() {
           <OcrWarningsCard warnings={extractedInvoice?.warnings || []} />
           <OcrTextPanel invoice={extractedInvoice} />
           <AiExtractionPanel invoice={extractedInvoice} />
-          <div className="grid min-w-0 gap-6 lg:grid-cols-2 xl:grid-cols-1">
+          <div className="grid min-w-0 gap-6 lg:grid-cols-2">
             <InventoryUpdatePreview invoice={extractedInvoice} />
             <SupplierUpdatePreview invoice={extractedInvoice} />
           </div>
@@ -1724,7 +1724,7 @@ export default function InvoiceScannerPage() {
         </div>
       </section>
 
-      <section className="relative z-0 space-y-4">
+      <section className="relative z-0 mt-10 clear-both space-y-4 border-t border-slate-100 pt-8">
         <SectionHeader
           subtitle="Recent scanned invoices saved in Appwrite for review workflows."
           title="Recent Scanned Invoices"

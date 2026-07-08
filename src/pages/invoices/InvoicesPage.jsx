@@ -299,7 +299,7 @@ function InvoiceTable({ actionLoading, invoices, onAiParse, onApprove, onDelete,
           </thead>
           <tbody>
             {invoices.map((invoice) => {
-              const canApprove = ['Pending Review', 'Processing', 'Uploaded'].includes(invoice.status);
+              const canApprove = invoice.status !== 'Approved' && !invoice.inventoryUpdated;
               const canAiParse = Boolean(invoice.extractedText) && !invoice.inventoryUpdated && invoice.status !== 'Approved';
               return (
                 <tr className="transition hover:bg-slate-50/70" key={invoice.id}>
@@ -368,7 +368,7 @@ function InvoiceTable({ actionLoading, invoices, onAiParse, onApprove, onDelete,
 }
 
 function InvoiceCard({ actionLoading, invoice, onAiParse, onApprove, onDelete, onReview, onView }) {
-  const canApprove = ['Pending Review', 'Processing', 'Uploaded'].includes(invoice.status);
+  const canApprove = invoice.status !== 'Approved' && !invoice.inventoryUpdated;
   const canAiParse = Boolean(invoice.extractedText) && !invoice.inventoryUpdated && invoice.status !== 'Approved';
 
   return (

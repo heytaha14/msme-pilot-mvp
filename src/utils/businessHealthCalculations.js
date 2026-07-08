@@ -174,8 +174,8 @@ export function calculateInventoryHealth(products = []) {
 
   if (!totalProducts) {
     return {
-      score: 40,
-      status: 'Needs Action',
+      score: 0,
+      status: 'Not Enough Data',
       insight: 'Add products to track inventory health.',
       totalProducts,
       lowStockCount,
@@ -224,8 +224,8 @@ export function calculateSalesPerformance(sales = []) {
 
   if (!active.length) {
     return {
-      score: 35,
-      status: 'Critical',
+      score: 0,
+      status: 'Not Enough Data',
       insight: 'No sales recorded yet. Add sales to measure performance.',
       currentMonthRevenue,
       previousMonthRevenue,
@@ -263,9 +263,11 @@ export function calculatePendingPaymentsScore(customers = [], sales = []) {
   const monthlyRevenue = calculateMonthlyRevenue(sales);
   const overdueCustomers = customers.filter((customer) => customer.paymentStatus === 'Overdue').length;
 
-  let score = 75;
+  let score = customers.length || activeSales(sales).length ? 75 : 0;
 
-  if (pendingAmount <= 0) {
+  if (!customers.length && !activeSales(sales).length) {
+    score = 0;
+  } else if (pendingAmount <= 0) {
     score = 100;
   } else if (monthlyRevenue > 0) {
     const pendingRatio = pendingAmount / monthlyRevenue;
@@ -285,10 +287,12 @@ export function calculatePendingPaymentsScore(customers = [], sales = []) {
 
   return {
     score,
-    status: getComponentStatus(score),
+    status: score ? getComponentStatus(score) : 'Not Enough Data',
     insight: pendingAmount > 0
       ? `${pendingAmount} is pending from customers.`
-      : 'Customer dues are clear.',
+      : customers.length || activeSales(sales).length
+        ? 'Customer dues are clear.'
+        : 'Add customers or sales to measure payment recovery.',
     customerPendingAmount,
     salesDueAmount,
     pendingAmount,
@@ -311,8 +315,8 @@ export function calculateCustomerGrowth(customers = []) {
 
   if (!totalCustomers) {
     return {
-      score: 35,
-      status: 'Critical',
+      score: 0,
+      status: 'Not Enough Data',
       insight: 'Add customers to track customer growth.',
       totalCustomers,
       newCustomersThisMonth,
@@ -350,8 +354,8 @@ export function calculateProfitMarginScore(sales = []) {
 
   if (!active.length || !revenue) {
     return {
-      score: 40,
-      status: 'Needs Action',
+      score: 0,
+      status: 'Not Enough Data',
       insight: 'Profit data is unavailable until sales include profit.',
       totalRevenue: revenue,
       totalProfit: profit,
