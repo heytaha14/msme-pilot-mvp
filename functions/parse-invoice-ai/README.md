@@ -23,6 +23,8 @@ Set these in the Appwrite Console function settings:
 ```text
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-5.4-mini-2026-03-17
+OPENAI_FALLBACK_MODELS=gpt-5.4-mini,gpt-4.1-mini,gpt-4o-mini
+OPENAI_MAX_MODELS=4
 OPENAI_FALLBACK_MODELS=
 APPWRITE_ENDPOINT=https://sgp.cloud.appwrite.io/v1
 APPWRITE_PROJECT_ID=6a4b9c4c001d2015e28a

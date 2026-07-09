@@ -34,8 +34,8 @@ const OPENAI_TIMEOUT_MS = Math.min(
   12000,
 );
 const OPENAI_MAX_MODELS = Math.min(
-  Math.max(Number(process.env.OPENAI_MAX_MODELS || 1), 1),
-  3,
+  Math.max(Number(process.env.OPENAI_MAX_MODELS || 4), 1),
+  5,
 );
 
 function json(res, payload, status = 200) {
@@ -307,7 +307,12 @@ function getOpenAIModelCandidates() {
     .split(',')
     .map((model) => model.trim())
     .filter(Boolean);
-  const defaults = ['gpt-5.4-mini-2026-03-17'];
+  const defaults = [
+    'gpt-5.4-mini-2026-03-17',
+    'gpt-5.4-mini',
+    'gpt-4.1-mini',
+    'gpt-4o-mini',
+  ];
 
   return [...new Set([configured, ...fallbackModels, ...defaults].filter(Boolean))]
     .slice(0, OPENAI_MAX_MODELS);
