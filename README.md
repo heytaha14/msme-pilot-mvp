@@ -11,7 +11,7 @@ MSME Pilot is an AI-powered business manager for Indian MSMEs. It helps owners m
 - Framer Motion
 - Appwrite Cloud Auth, Database, Storage, and Functions
 - Tesseract.js local OCR
-- OpenRouter through Appwrite Functions only
+- OpenAI through Appwrite Functions only
 - Hostinger KVM + Nginx for frontend deployment
 
 ## Local Development
@@ -100,11 +100,11 @@ Vite env values are baked into `dist/`, so rebuild after changing them.
 ## Security Notes
 
 - No `APPWRITE_API_KEY` in frontend.
-- No `OPENROUTER_API_KEY` or `OPENAI_API_KEY` in frontend.
+- No `OPENAI_API_KEY` or `OPENAI_API_KEY` in frontend.
 - No `VITE_APPWRITE_API_KEY`.
 - No `VITE_OPENAI_API_KEY`.
 - AI provider calls happen only in Appwrite Functions.
-- Appwrite Functions must keep OpenRouter and Appwrite API keys in server-side function env.
+- Appwrite Functions must keep OpenAI and Appwrite API keys in server-side function env.
 - Business documents use `userId` isolation and per-user document permissions.
 
 ## Next Step

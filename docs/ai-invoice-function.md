@@ -5,14 +5,14 @@ Prompt 24 adds a secure server-side AI invoice parser for MSME Pilot.
 ## Architecture
 
 ```text
-React frontend -> Appwrite Function -> OpenRouter Chat Completions API -> Appwrite Database
+React frontend -> Appwrite Function -> OpenAI Chat Completions API -> Appwrite Database
 ```
 
-The frontend executes an Appwrite Function with the authenticated Appwrite session. The function fetches the invoice, verifies ownership, calls OpenRouter server-side, validates the JSON result, updates `purchase_invoices`, and creates/replaces `invoice_items`.
+The frontend executes an Appwrite Function with the authenticated Appwrite session. The function fetches the invoice, verifies ownership, calls OpenAI server-side, validates the JSON result, updates `purchase_invoices`, and creates/replaces `invoice_items`.
 
-## Why the OpenRouter Key Is Server-Side Only
+## Why the OpenAI key Is Server-Side Only
 
-OpenRouter API keys are secrets. They must never be bundled into Vite or exposed in browser code. The frontend only receives:
+OpenAI API keys are secrets. They must never be bundled into Vite or exposed in browser code. The frontend only receives:
 
 ```text
 VITE_APPWRITE_PARSE_INVOICE_FUNCTION_ID=parse_invoice_ai
@@ -21,19 +21,16 @@ VITE_APPWRITE_PARSE_INVOICE_FUNCTION_ID=parse_invoice_ai
 The function receives:
 
 ```text
-OPENROUTER_API_KEY=
-OPENROUTER_MODEL=tencent/hy3:free
-OPENROUTER_FALLBACK_MODELS=poolside/laguna-xs-2.1:free,cohere/north-mini-code:free
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_SITE_URL=http://localhost
-OPENROUTER_APP_NAME=MSME Pilot
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-5.4-mini-2026-03-17
+OPENAI_FALLBACK_MODELS=
 APPWRITE_ENDPOINT=
 APPWRITE_PROJECT_ID=
 APPWRITE_API_KEY=
 APPWRITE_DATABASE_ID=msme_pilot
 ```
 
-`OPENROUTER_MODEL` should be a real model ID available to your OpenRouter account. The function also tries `OPENROUTER_FALLBACK_MODELS` and then bundled free-model fallbacks if the selected provider/model is unavailable.
+`OpenAI_MODEL` should be a real model ID available to your OpenAI account. The function also tries `OpenAI_FALLBACK_MODELS` and then bundled free-model fallbacks if the selected provider/model is unavailable.
 
 Never create:
 
@@ -50,7 +47,7 @@ VITE_APPWRITE_API_KEY
 4. User clicks `Parse with AI`.
 5. Frontend executes `parse_invoice_ai`.
 6. Function verifies authenticated user and invoice ownership.
-7. Function sends OCR text to OpenRouter and requests strict JSON.
+7. Function sends OCR text to OpenAI and requests strict JSON.
 8. Function validates the AI JSON.
 9. Function runs deterministic amount/date/item checks.
 10. Function updates the invoice to `Pending Review`.
@@ -113,14 +110,14 @@ The AI response includes confidence scores and `needsManualReview`. Deterministi
 - OCR quality still affects extraction.
 - PDF OCR is not enabled yet.
 - No automatic inventory update yet.
-- No direct frontend OpenRouter calls.
+- No direct frontend OpenAI calls.
 
 ## Troubleshooting
 
 - Function ID missing: add `VITE_APPWRITE_PARSE_INVOICE_FUNCTION_ID=parse_invoice_ai`.
 - Function deployment missing: create/deploy the Appwrite Function.
-- OpenRouter key missing: add `OPENROUTER_API_KEY` in function env.
-- Model unavailable: change `OPENROUTER_MODEL` to an enabled OpenRouter model.
+- OpenAI key missing: add `OPENAI_API_KEY` in function env.
+- Model unavailable: change `OpenAI_MODEL` to an enabled OpenAI model.
 - Appwrite API key missing: add server-side `APPWRITE_API_KEY` in function env.
 - Permission denied: verify function execute permissions and document ownership.
 - Invoice missing OCR text: run OCR before AI parse.

@@ -4,7 +4,7 @@ The current recommended MSME Pilot deployment uses:
 
 - React frontend on Hostinger KVM.
 - Appwrite Cloud for Auth, Database, Storage, and Functions.
-- OpenRouter called only from Appwrite Functions.
+- OpenAI called only from Appwrite Functions.
 
 Do not self-host Appwrite in this deployment stage.
 

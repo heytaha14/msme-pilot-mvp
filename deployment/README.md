@@ -13,7 +13,7 @@ flowchart LR
   Browser["Browser"] --> Nginx["Nginx static React app on Hostinger KVM"]
   Nginx --> Appwrite["Appwrite Cloud"]
   Appwrite --> Functions["Appwrite Functions"]
-  Functions --> OpenRouter["OpenRouter server-side"]
+  Functions --> OpenAI["OpenAI server-side"]
 ```
 
 Vite environment variables are baked into the production build. If Appwrite endpoint, project ID, or function IDs change, update `.env.production`, rebuild, and redeploy.
@@ -51,7 +51,7 @@ In Appwrite Console:
 - Add Web Platform for the production domain, for example `msmepilot.in`.
 - Add Web Platform for `www.msmepilot.in` or `app.msmepilot.in` if used.
 - Use hostnames only. Do not include `https://` unless Appwrite specifically asks.
-- Keep OpenRouter and Appwrite server keys only in Appwrite Function environment variables.
+- Keep OpenAI and Appwrite server keys only in Appwrite Function environment variables.
 
 Before production, run:
 

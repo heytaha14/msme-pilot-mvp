@@ -37,6 +37,7 @@ import {
 } from '../../services/aiAssistantService.js';
 import { listBusinessHealthSnapshots } from '../../services/businessHealthService.js';
 import { getReportStats, loadReportData } from '../../services/reportService.js';
+import { sanitizeAiProviderText } from '../../utils/aiErrors.js';
 import { formatCurrency, truncateText } from '../../utils/formatters.js';
 
 const suggestedQuestions = [
@@ -142,7 +143,7 @@ function isEmptyAiAnswer(answer) {
 function DemoModeNotice() {
   return (
     <div className="rounded-2xl border border-indigo-100 bg-indigo-50 px-4 py-3 text-sm font-semibold text-indigo-700">
-      Secure AI mode: questions are sent to an Appwrite Function. OpenRouter and Appwrite API keys stay server-side.
+      Secure AI mode: questions are sent to an Appwrite Function. OpenAI and Appwrite API keys stay server-side.
     </div>
   );
 }
@@ -249,7 +250,7 @@ function ChatMessage({ message, onMicroAction }) {
       ) : null}
       <div className={`max-w-[86%] ${isUser ? 'text-right' : ''}`}>
         <div className={`rounded-3xl px-4 py-3 text-sm leading-6 ${isUser ? 'bg-slate-950 text-white' : message.error ? 'border border-rose-100 bg-rose-50 text-rose-700' : 'border border-slate-100 bg-slate-50 text-slate-700'}`}>
-          {message.content}
+          {sanitizeAiProviderText(message.content)}
         </div>
         {!isUser && !message.error ? (
           <>
@@ -257,7 +258,7 @@ function ChatMessage({ message, onMicroAction }) {
             <SuggestedActionCards actions={message.suggestedActions} />
             {message.warnings?.length ? (
               <div className="mt-3 rounded-2xl bg-amber-50 px-4 py-3 text-xs font-semibold text-amber-700">
-                {message.warnings.join(' ')}
+                {message.warnings.map(sanitizeAiProviderText).join(' ')}
               </div>
             ) : null}
             <div className="mt-2 flex flex-wrap gap-2">
@@ -684,7 +685,7 @@ export default function AiAssistantPage() {
         await saveAiInsight(user?.$id, message.messageId);
         addMicroMessage('Insight saved.');
       } catch (error) {
-        addMicroMessage(error.message || 'Insight will be saved after history sync.');
+      addMicroMessage(sanitizeAiProviderText(error.message || 'Insight will be saved after history sync.'));
       }
       return;
     }

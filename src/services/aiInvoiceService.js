@@ -20,7 +20,7 @@ export function parseFunctionExecutionResponse(execution) {
   if (execution.status === 'failed' || execution.responseStatusCode >= 400 || payload?.success === false) {
     const error = payload?.error || {};
     const details = execution.errors || execution.logs || '';
-    throw new Error(error.message || details || 'AI function execution failed before reaching OpenRouter.');
+    throw new Error(error.message || details || 'AI function execution failed before reaching OpenAI.');
   }
 
   const data = payload?.data || payload?.result || payload;

@@ -176,13 +176,91 @@ function findMatchingProduct(products, item) {
   });
 }
 
-async function createProductFromInvoiceItem(userId, invoice, item) {
+function scoreProductMatch(product, item) {
+  const productName = normalizeName(product.name || product.productName);
+  const itemName = normalizeName(item.productName);
+  if (!productName || !itemName) return 0;
+  if (productName === itemName) return 100;
+  if (productName.includes(itemName) || itemName.includes(productName)) return 82;
+
+  const productTokens = new Set(productName.split(' ').filter((token) => token.length > 2));
+  const itemTokens = itemName.split(' ').filter((token) => token.length > 2);
+  if (!productTokens.size || !itemTokens.length) return 0;
+
+  const matches = itemTokens.filter((token) => productTokens.has(token)).length;
+  return Math.round((matches / Math.max(itemTokens.length, productTokens.size)) * 70);
+}
+
+function findCandidateProducts(products, item) {
+  const itemProductId = item.productId || item.matchedProductId || '';
+  return products
+    .map((product) => ({
+      product,
+      score: itemProductId && (product.$id === itemProductId || product.id === itemProductId)
+        ? 100
+        : scoreProductMatch(product, item),
+    }))
+    .filter(({ score }) => score >= 35)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5)
+    .map(({ product, score }) => ({
+      id: product.$id || product.id,
+      name: product.name || product.productName,
+      category: product.category || 'Uncategorized',
+      supplierName: product.supplierName || product.supplier || '',
+      stock: Number(product.stock ?? product.currentStock ?? 0),
+      minStock: Number(product.minStock ?? product.minimumStock ?? 0),
+      purchasePrice: Number(product.purchasePrice || 0),
+      sellingPrice: Number(product.sellingPrice || 0),
+      gstPercentage: Number(product.gstPercentage || 0),
+      unit: product.unit || '',
+      score,
+    }));
+}
+
+function buildInvoiceItemKey(item, index) {
+  return String(item.id || item.$id || `${normalizeName(item.productName)}-${index}`);
+}
+
+function buildProductDraft(invoice, item) {
+  const unitCost = getUnitCost(item);
+  const quantity = Number(item.quantity || 0);
+
+  return {
+    name: item.productName || '',
+    category: 'Invoice Import',
+    barcode: '',
+    supplierId: invoice.supplierId || '',
+    supplierName: invoice.supplierName || '',
+    purchasePrice: unitCost,
+    sellingPrice: unitCost > 0 ? Math.round(unitCost * 1.15 * 100) / 100 : 0,
+    gstPercentage: Number(item.gstPercentage || 0),
+    stock: quantity,
+    minStock: 0,
+    unit: item.unit || '',
+    imageFileId: '',
+    notes: `Created from purchase invoice ${invoice.invoiceNumber || invoice.$id}.`,
+  };
+}
+
+async function createProductFromInvoiceItem(userId, invoice, item, productOverride = {}) {
   const quantity = Number(item.quantity || 0);
   const unitCost = getUnitCost(item);
   const now = new Date().toISOString();
-  const name = String(item.productName || '').trim();
+  const draft = {
+    ...buildProductDraft(invoice, item),
+    ...productOverride,
+  };
+  const name = String(draft.name || item.productName || '').trim();
+  const stock = toNumber(draft.stock ?? draft.currentStock ?? quantity);
+  const minStock = toNumber(draft.minStock ?? draft.minimumStock ?? 0);
+  const purchasePrice = toNumber(draft.purchasePrice || unitCost);
+  const sellingPrice = toNumber(draft.sellingPrice || purchasePrice);
 
-  if (!name || quantity <= 0) return null;
+  if (!name || stock < 0) return null;
+  if (purchasePrice < 0 || sellingPrice < 0 || minStock < 0) {
+    throw new Error(`Complete buying price, selling price, current stock, and minimum stock for ${name}.`);
+  }
 
   const createdProduct = await databases.createDocument(
     DATABASE_ID,
@@ -191,19 +269,19 @@ async function createProductFromInvoiceItem(userId, invoice, item) {
     {
       userId,
       name,
-      category: 'Invoice Import',
-      barcode: '',
-      supplierId: invoice.supplierId || '',
-      supplierName: invoice.supplierName || '',
-      purchasePrice: unitCost,
-      sellingPrice: unitCost,
+      category: draft.category || 'Invoice Import',
+      barcode: draft.barcode || '',
+      supplierId: draft.supplierId || invoice.supplierId || '',
+      supplierName: draft.supplierName || invoice.supplierName || '',
+      purchasePrice,
+      sellingPrice,
       gstPercentage: Number(item.gstPercentage || 0),
-      stock: quantity,
-      minStock: 0,
-      unit: item.unit || '',
-      imageFileId: '',
-      status: getStockStatus({ stock: quantity, minStock: 0 }),
-      notes: `Created from purchase invoice ${invoice.invoiceNumber || invoice.$id}.`,
+      stock,
+      minStock,
+      unit: draft.unit || item.unit || '',
+      imageFileId: draft.imageFileId || '',
+      status: getStockStatus({ stock, minStock }),
+      notes: draft.notes || `Created from purchase invoice ${invoice.invoiceNumber || invoice.$id}.`,
       createdAt: now,
       updatedAt: now,
     },
@@ -214,9 +292,9 @@ async function createProductFromInvoiceItem(userId, invoice, item) {
     productId: createdProduct.$id,
     productName: createdProduct.name,
     movementType: 'invoice_scan',
-    quantity,
+    quantity: stock,
     previousStock: 0,
-    newStock: quantity,
+    newStock: stock,
     referenceType: 'purchase_invoice',
     referenceId: invoice.$id || invoice.id,
     note: `Stock created from invoice ${invoice.invoiceNumber || invoice.$id}.`,
@@ -270,7 +348,7 @@ async function increaseProductStockFromInvoice(userId, invoice, product, item) {
   return updatedProduct;
 }
 
-async function applyInvoiceToInventory(userId, invoice, items) {
+async function applyInvoiceToInventory(userId, invoice, items, decisions = {}) {
   if (!items.length) {
     throw new Error('Add at least one invoice item before approving inventory update.');
   }
@@ -279,18 +357,28 @@ async function applyInvoiceToInventory(userId, invoice, items) {
   let createdCount = 0;
   let updatedCount = 0;
 
-  for (const item of items) {
+  for (const [index, item] of items.entries()) {
     const quantity = Number(item.quantity || 0);
     if (!item.productName || quantity <= 0) continue;
 
-    const match = findMatchingProduct(products, item);
+    const itemKey = buildInvoiceItemKey(item, index);
+    const decision = decisions[itemKey] || decisions[item.id] || decisions[item.productName] || null;
+    const match = decision?.action === 'match' && decision.productId
+      ? products.find((product) => product.$id === decision.productId || product.id === decision.productId)
+      : findMatchingProduct(products, item);
+
     if (match) {
       const updatedProduct = await increaseProductStockFromInvoice(userId, invoice, match, item);
       const index = products.findIndex((product) => product.$id === match.$id);
       if (index >= 0 && updatedProduct) products[index] = updatedProduct;
       updatedCount += 1;
     } else {
-      const createdProduct = await createProductFromInvoiceItem(userId, invoice, item);
+      const createdProduct = await createProductFromInvoiceItem(
+        userId,
+        invoice,
+        item,
+        decision?.action === 'create' ? decision.productData : {},
+      );
       if (createdProduct) {
         products.push(createdProduct);
         createdCount += 1;
@@ -303,6 +391,39 @@ async function applyInvoiceToInventory(userId, invoice, items) {
   }
 
   return { createdCount, updatedCount };
+}
+
+export async function getPurchaseInvoiceInventoryReview(userId, invoiceId) {
+  try {
+    const invoice = await databases.getDocument(
+      DATABASE_ID,
+      COLLECTION_IDS.PURCHASE_INVOICES,
+      invoiceId,
+    );
+
+    assertInvoiceOwner(invoice, userId);
+
+    const existingItems = await listInvoiceItems(userId, invoiceId);
+    const items = await recoverInvoiceItemsForApproval(userId, invoice, existingItems);
+    const products = await listProductsForInvoice(userId);
+    const normalizedInvoice = toPurchaseInvoiceRecord(invoice, items);
+
+    return {
+      invoice: normalizedInvoice,
+      items: items.map((item, index) => {
+        const matches = findCandidateProducts(products, item);
+        return {
+          ...item,
+          itemKey: buildInvoiceItemKey(item, index),
+          matches,
+          recommendedAction: matches.length ? 'match' : 'create',
+          productDraft: buildProductDraft(invoice, item),
+        };
+      }),
+    };
+  } catch (error) {
+    throw createFriendlyAppwriteError(error, 'Could not prepare inventory review.');
+  }
 }
 
 async function applyInvoiceToSupplier(userId, invoice, items) {
@@ -678,7 +799,7 @@ export async function updatePurchaseInvoice(userId, invoiceId, invoiceData) {
   }
 }
 
-export async function approvePurchaseInvoice(userId, invoiceId) {
+export async function approvePurchaseInvoice(userId, invoiceId, inventoryDecisions = {}) {
   try {
     const invoice = await databases.getDocument(
       DATABASE_ID,
@@ -694,7 +815,7 @@ export async function approvePurchaseInvoice(userId, invoiceId) {
 
     const existingItems = await listInvoiceItems(userId, invoiceId);
     const items = await recoverInvoiceItemsForApproval(userId, invoice, existingItems);
-    const inventoryResult = await applyInvoiceToInventory(userId, invoice, items);
+    const inventoryResult = await applyInvoiceToInventory(userId, invoice, items, inventoryDecisions);
     let supplier = null;
     let supplierUpdateWarning = '';
 

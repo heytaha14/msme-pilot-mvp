@@ -493,7 +493,7 @@ function IntegrationsPanel({ onAction }) {
           ...integration,
           status: assistantAiFunctionConfigured ? 'Configured' : invoiceAiFunctionConfigured ? 'Demo Mode' : 'Not Configured',
           description: assistantAiFunctionConfigured
-            ? 'AI Assistant is routed through a secure Appwrite Function. OpenRouter keys stay server-side.'
+            ? 'AI Assistant is routed through a secure Appwrite Function. OpenAI keys stay server-side.'
             : invoiceAiFunctionConfigured
               ? 'Invoice AI parsing is configured. AI Assistant function is still pending.'
             : integration.description,

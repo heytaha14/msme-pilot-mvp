@@ -20,7 +20,7 @@ import {
   WandSparkles,
   X,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import clsx from 'clsx';
 import Badge from '../../components/common/Badge.jsx';
@@ -41,6 +41,7 @@ import {
   createInvoiceItem,
   deletePurchaseInvoice,
   deleteInvoiceItemsForInvoice,
+  getPurchaseInvoiceInventoryReview,
   getPurchaseInvoiceWithItems,
   getInvoiceStats,
   listPurchaseInvoices,
@@ -897,27 +898,254 @@ function InvoiceReviewModal({ invoice, loading, onClose, onSave }) {
   );
 }
 
-function ApproveInvoiceModal({ errorMessage, invoice, loading, onCancel, onConfirm }) {
+function ApproveInvoiceModal({
+  errorMessage,
+  inventoryReview,
+  invoice,
+  loading,
+  onCancel,
+  onConfirm,
+  reviewLoading,
+}) {
+  const [decisions, setDecisions] = useState({});
+  const reviewItems = inventoryReview?.items || [];
+
+  useEffect(() => {
+    if (!inventoryReview?.items?.length) return;
+
+    const nextDecisions = {};
+    inventoryReview.items.forEach((item) => {
+      const firstMatch = item.matches?.[0];
+      nextDecisions[item.itemKey] = {
+        action: firstMatch ? 'match' : 'create',
+        productId: firstMatch?.id || '',
+        productData: {
+          ...item.productDraft,
+          stock: Number(item.productDraft?.stock || item.quantity || 0),
+        },
+      };
+    });
+    setDecisions(nextDecisions);
+  }, [inventoryReview]);
+
+  function updateDecision(itemKey, patch) {
+    setDecisions((current) => ({
+      ...current,
+      [itemKey]: {
+        ...(current[itemKey] || {}),
+        ...patch,
+      },
+    }));
+  }
+
+  function updateProductData(itemKey, field, value) {
+    setDecisions((current) => ({
+      ...current,
+      [itemKey]: {
+        ...(current[itemKey] || {}),
+        action: 'create',
+        productData: {
+          ...(current[itemKey]?.productData || {}),
+          [field]: value,
+        },
+      },
+    }));
+  }
+
+  const canApprove = reviewItems.length > 0 && reviewItems.every((item) => {
+    const decision = decisions[item.itemKey];
+    if (!decision) return false;
+    if (decision.action === 'match') return Boolean(decision.productId);
+
+    const productData = decision.productData || {};
+    return (
+      productData.name &&
+      productData.category &&
+      Number(productData.purchasePrice) >= 0 &&
+      Number(productData.sellingPrice) >= 0 &&
+      Number(productData.stock) >= 0 &&
+      Number(productData.minStock) >= 0
+    );
+  });
+
   return (
-    <ModalShell onClose={onCancel} size="max-w-md">
+    <ModalShell onClose={onCancel} size="max-w-4xl">
       <div className="p-5 sm:p-6">
-        <div className="grid h-12 w-12 place-items-center rounded-2xl bg-emerald-50 text-emerald-600">
-          <CheckCircle2 className="h-6 w-6" />
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <div className="grid h-12 w-12 place-items-center rounded-2xl bg-emerald-50 text-emerald-600">
+              <CheckCircle2 className="h-6 w-6" />
+            </div>
+            <h2 className="mt-5 text-2xl font-black tracking-tight text-slate-950">
+              Review inventory update
+            </h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-500">
+              Approving {invoice.invoiceNumber} will mark the invoice approved, increase purchase stock, and update the supplier ledger. Confirm each item before inventory changes are saved.
+            </p>
+          </div>
+          <button
+            aria-label="Close approval review"
+            className="grid h-10 w-10 place-items-center rounded-full bg-slate-100 text-slate-500 transition hover:bg-slate-200 hover:text-slate-950"
+            onClick={onCancel}
+            type="button"
+          >
+            <X className="h-5 w-5" />
+          </button>
         </div>
-        <h2 className="mt-5 text-2xl font-black tracking-tight text-slate-950">
-          Approve this invoice?
-        </h2>
-        <p className="mt-2 text-sm leading-6 text-slate-500">
-          This will mark {invoice.invoiceNumber} as approved, increase inventory stock, and update the supplier ledger.
-        </p>
+
         {errorMessage ? (
           <div className="mt-5 rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm font-semibold leading-6 text-rose-700">
             {errorMessage}
           </div>
         ) : null}
+
+        {reviewLoading ? (
+          <div className="mt-6 grid min-h-[240px] place-items-center rounded-3xl bg-slate-50 text-center">
+            <div>
+              <Loader2 className="mx-auto h-7 w-7 animate-spin text-indigo-600" />
+              <p className="mt-3 text-sm font-bold text-slate-600">Preparing product matches...</p>
+            </div>
+          </div>
+        ) : null}
+
+        {!reviewLoading && !reviewItems.length ? (
+          <div className="mt-6 rounded-3xl border border-amber-100 bg-amber-50 p-5 text-sm font-semibold leading-6 text-amber-800">
+            No invoice items were found. Review the invoice line items first, then approve inventory.
+          </div>
+        ) : null}
+
+        {!reviewLoading && reviewItems.length ? (
+          <div className="mt-6 space-y-4">
+            {reviewItems.map((item) => {
+              const decision = decisions[item.itemKey] || {};
+              const productData = decision.productData || item.productDraft || {};
+              const selectedMatch = item.matches?.find((match) => match.id === decision.productId);
+              const incomingQuantity = Number(item.quantity || 0);
+
+              return (
+                <div className="rounded-3xl border border-slate-100 bg-slate-50 p-4" key={item.itemKey}>
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div>
+                      <p className="text-lg font-black text-slate-950">{item.productName}</p>
+                      <p className="mt-1 text-sm font-semibold text-slate-500">
+                        Invoice quantity: {incomingQuantity} {item.unit || 'units'} - {formatCurrency(item.amount)}
+                      </p>
+                    </div>
+                    <Badge variant={item.matches?.length ? 'info' : 'warning'}>
+                      {item.matches?.length ? `${item.matches.length} possible match(es)` : 'New product needed'}
+                    </Badge>
+                  </div>
+
+                  {item.matches?.length ? (
+                    <div className="mt-4 grid gap-3 lg:grid-cols-[0.8fr_1.2fr]">
+                      <label className="flex items-center gap-3 rounded-2xl bg-white p-3 text-sm font-bold text-slate-700">
+                        <input
+                          checked={decision.action === 'match'}
+                          className="h-4 w-4 text-indigo-600 focus:ring-indigo-500"
+                          name={`action-${item.itemKey}`}
+                          onChange={() => updateDecision(item.itemKey, {
+                            action: 'match',
+                            productId: decision.productId || item.matches[0].id,
+                          })}
+                          type="radio"
+                        />
+                        Use existing product
+                      </label>
+                      <select
+                        className="h-12 rounded-2xl border border-slate-200 bg-white px-4 text-sm font-semibold text-slate-700 outline-none transition focus:border-indigo-300 focus:ring-4 focus:ring-indigo-100 disabled:opacity-50"
+                        disabled={decision.action !== 'match'}
+                        onChange={(event) => updateDecision(item.itemKey, {
+                          action: 'match',
+                          productId: event.target.value,
+                        })}
+                        value={decision.productId || item.matches[0].id}
+                      >
+                        {item.matches.map((match) => (
+                          <option key={match.id} value={match.id}>
+                            {match.name} - stock {match.stock} to {match.stock + incomingQuantity}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : null}
+
+                  {selectedMatch && decision.action === 'match' ? (
+                    <div className="mt-3 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
+                      {selectedMatch.name} will increase from {selectedMatch.stock} to {selectedMatch.stock + incomingQuantity}.
+                    </div>
+                  ) : null}
+
+                  <label className="mt-3 flex items-center gap-3 rounded-2xl bg-white p-3 text-sm font-bold text-slate-700">
+                    <input
+                      checked={decision.action === 'create'}
+                      className="h-4 w-4 text-indigo-600 focus:ring-indigo-500"
+                      name={`action-${item.itemKey}`}
+                      onChange={() => updateDecision(item.itemKey, { action: 'create' })}
+                      type="radio"
+                    />
+                    Create new inventory product
+                  </label>
+
+                  {decision.action === 'create' ? (
+                    <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                      <Input
+                        label="Product name"
+                        name={`new-name-${item.itemKey}`}
+                        onChange={(event) => updateProductData(item.itemKey, 'name', event.target.value)}
+                        value={productData.name || ''}
+                      />
+                      <Input
+                        label="Category"
+                        name={`new-category-${item.itemKey}`}
+                        onChange={(event) => updateProductData(item.itemKey, 'category', event.target.value)}
+                        value={productData.category || ''}
+                      />
+                      <Input
+                        label="Buying price"
+                        name={`new-buy-${item.itemKey}`}
+                        onChange={(event) => updateProductData(item.itemKey, 'purchasePrice', event.target.value)}
+                        type="number"
+                        value={String(productData.purchasePrice ?? '')}
+                      />
+                      <Input
+                        label="Selling price"
+                        name={`new-sell-${item.itemKey}`}
+                        onChange={(event) => updateProductData(item.itemKey, 'sellingPrice', event.target.value)}
+                        type="number"
+                        value={String(productData.sellingPrice ?? '')}
+                      />
+                      <Input
+                        label="New current stock"
+                        name={`new-stock-${item.itemKey}`}
+                        onChange={(event) => updateProductData(item.itemKey, 'stock', event.target.value)}
+                        type="number"
+                        value={String(productData.stock ?? '')}
+                      />
+                      <Input
+                        label="Minimum stock"
+                        name={`new-min-${item.itemKey}`}
+                        onChange={(event) => updateProductData(item.itemKey, 'minStock', event.target.value)}
+                        type="number"
+                        value={String(productData.minStock ?? '')}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+
         <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
           <Button onClick={onCancel} rounded="2xl" variant="secondary">Cancel</Button>
-          <Button loading={loading} onClick={onConfirm} rounded="2xl">Approve Invoice</Button>
+          <Button
+            disabled={!canApprove || reviewLoading}
+            loading={loading}
+            onClick={() => onConfirm(decisions)}
+            rounded="2xl"
+          >
+            Approve & Update Inventory
+          </Button>
         </div>
       </div>
     </ModalShell>
@@ -1056,6 +1284,8 @@ function getInvoiceInsight(invoices, stats) {
 
 export default function InvoicesPage() {
   const { user } = useAuth();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState('');
@@ -1068,6 +1298,8 @@ export default function InvoicesPage() {
     sortBy: 'Latest',
   });
   const [modalState, setModalState] = useState({ type: null, invoice: null });
+  const [approvalReview, setApprovalReview] = useState(null);
+  const [handledApprovalId, setHandledApprovalId] = useState('');
 
   const loadInvoices = useCallback(async () => {
     if (!user?.$id) return;
@@ -1242,12 +1474,41 @@ export default function InvoicesPage() {
     }
   }
 
-  async function approveInvoice() {
+  async function openApproveModal(invoice) {
+    if (!user?.$id || !invoice?.id) return;
+
+    setFeedback({ message: '', tone: 'info' });
+    setModalState({ type: 'approve', invoice });
+    setApprovalReview(null);
+    setActionLoading('prepare-approval');
+
+    try {
+      setApprovalReview(await getPurchaseInvoiceInventoryReview(user.$id, invoice.id));
+    } catch (error) {
+      setFeedback({ message: error.message || 'Could not prepare inventory review.', tone: 'danger' });
+    } finally {
+      setActionLoading('');
+    }
+  }
+
+  useEffect(() => {
+    const requestedInvoiceId = location.state?.approveInvoiceId;
+    if (!requestedInvoiceId || loading || handledApprovalId === requestedInvoiceId) return;
+
+    const invoice = invoices.find((item) => item.id === requestedInvoiceId);
+    if (!invoice) return;
+
+    setHandledApprovalId(requestedInvoiceId);
+    openApproveModal(invoice);
+    navigate(location.pathname, { replace: true, state: {} });
+  }, [handledApprovalId, invoices, loading, location.pathname, location.state, navigate]);
+
+  async function approveInvoice(inventoryDecisions) {
     if (!user?.$id || !modalState.invoice) return;
 
     setActionLoading('approve');
     try {
-      const approved = await approvePurchaseInvoice(user.$id, modalState.invoice.id);
+      const approved = await approvePurchaseInvoice(user.$id, modalState.invoice.id, inventoryDecisions);
       const result = approved.inventoryUpdateResult;
       setFeedback({
         message: approved.supplierUpdateWarning
@@ -1258,6 +1519,7 @@ export default function InvoicesPage() {
         tone: approved.supplierUpdateWarning ? 'warning' : 'success',
       });
       setModalState({ type: null, invoice: null });
+      setApprovalReview(null);
       await loadInvoices();
     } catch (error) {
       setFeedback({ message: error.message || 'Could not approve invoice.', tone: 'danger' });
@@ -1363,10 +1625,7 @@ export default function InvoicesPage() {
             actionLoading={actionLoading}
             invoices={filteredInvoices}
             onAiParse={parseInvoiceAi}
-            onApprove={(invoice) => {
-              setFeedback({ message: '', tone: 'info' });
-              setModalState({ type: 'approve', invoice });
-            }}
+            onApprove={openApproveModal}
             onDelete={(invoice) => setModalState({ type: 'delete', invoice })}
             onReview={(invoice) => setModalState({ type: 'review', invoice })}
             onView={(invoice) => setModalState({ type: 'view', invoice })}
@@ -1378,10 +1637,7 @@ export default function InvoicesPage() {
                 key={invoice.id}
                 actionLoading={actionLoading}
                 onAiParse={parseInvoiceAi}
-                onApprove={(selectedInvoice) => {
-                  setFeedback({ message: '', tone: 'info' });
-                  setModalState({ type: 'approve', invoice: selectedInvoice });
-                }}
+                onApprove={openApproveModal}
                 onDelete={(selectedInvoice) => setModalState({ type: 'delete', invoice: selectedInvoice })}
                 onReview={(selectedInvoice) => setModalState({ type: 'review', invoice: selectedInvoice })}
                 onView={(selectedInvoice) => setModalState({ type: 'view', invoice: selectedInvoice })}
@@ -1398,10 +1654,7 @@ export default function InvoicesPage() {
           actionLoading={actionLoading}
           invoice={modalState.invoice}
           onAiParse={parseInvoiceAi}
-          onApprove={(invoice) => {
-            setFeedback({ message: '', tone: 'info' });
-            setModalState({ type: 'approve', invoice });
-          }}
+          onApprove={openApproveModal}
           onClose={() => setModalState({ type: null, invoice: null })}
         />
       ) : null}
@@ -1418,9 +1671,14 @@ export default function InvoicesPage() {
       {modalState.type === 'approve' && modalState.invoice ? (
         <ApproveInvoiceModal
           errorMessage={feedback.tone === 'danger' ? feedback.message : ''}
+          inventoryReview={approvalReview}
           invoice={modalState.invoice}
           loading={actionLoading === 'approve'}
-          onCancel={() => setModalState({ type: null, invoice: null })}
+          reviewLoading={actionLoading === 'prepare-approval'}
+          onCancel={() => {
+            setModalState({ type: null, invoice: null });
+            setApprovalReview(null);
+          }}
           onConfirm={approveInvoice}
         />
       ) : null}

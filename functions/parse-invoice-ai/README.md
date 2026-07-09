@@ -4,9 +4,9 @@ Secure Appwrite Function for MSME Pilot purchase invoice AI extraction.
 
 ## Purpose
 
-This function receives an authenticated request containing an invoice document ID, fetches the private invoice server-side, reads its OCR text, calls OpenRouter server-side, validates the structured result, updates the purchase invoice, and replaces invoice item rows for review.
+This function receives an authenticated request containing an invoice document ID, fetches the private invoice server-side, reads its OCR text, calls OpenAI server-side, validates the structured result, updates the purchase invoice, and replaces invoice item rows for review.
 
-The React frontend never calls OpenRouter directly.
+The React frontend never calls OpenAI directly.
 
 ## Function ID
 
@@ -21,12 +21,9 @@ parse_invoice_ai
 Set these in the Appwrite Console function settings:
 
 ```text
-OPENROUTER_API_KEY=
-OPENROUTER_MODEL=tencent/hy3:free
-OPENROUTER_FALLBACK_MODELS=poolside/laguna-xs-2.1:free,cohere/north-mini-code:free
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_SITE_URL=http://localhost
-OPENROUTER_APP_NAME=MSME Pilot
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-5.4-mini-2026-03-17
+OPENAI_FALLBACK_MODELS=
 APPWRITE_ENDPOINT=https://sgp.cloud.appwrite.io/v1
 APPWRITE_PROJECT_ID=6a4b9c4c001d2015e28a
 APPWRITE_API_KEY=
@@ -35,9 +32,8 @@ APPWRITE_DATABASE_ID=msme_pilot
 
 Security notes:
 
-- `OPENROUTER_API_KEY` must be Appwrite Function-only.
+- `OPENAI_API_KEY` must be Appwrite Function-only.
 - `APPWRITE_API_KEY` must be Appwrite Function-only.
-- Never create `VITE_OPENROUTER_API_KEY`.
 - Never create `VITE_OPENAI_API_KEY`.
 - Never create `VITE_APPWRITE_API_KEY`.
 - Do not log secrets.
@@ -99,12 +95,12 @@ This repository does not currently include `appwrite.json`, so deployment was no
 
 ## Troubleshooting
 
-- Missing `OPENROUTER_API_KEY`: set it in Appwrite Function environment variables.
+- Missing `OPENAI_API_KEY`: set it in Appwrite Function environment variables.
 - Missing `APPWRITE_API_KEY`: set a server-side Appwrite key with database document read/update/delete/create permissions.
 - Missing `x-appwrite-user-jwt`: execute the function through an authenticated Appwrite client.
 - Missing OCR text: run OCR first from `/invoice-scanner`.
 - Approved invoice: reset/revise the invoice before parsing again.
-- Model unavailable: change `OPENROUTER_MODEL` to an enabled OpenRouter model for your account.
+- Model unavailable: change `OpenAI_MODEL` to an enabled OpenAI model for your account.
 
 ## Limitations
 

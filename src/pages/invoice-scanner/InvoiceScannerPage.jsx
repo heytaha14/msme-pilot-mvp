@@ -22,7 +22,7 @@ import {
   WandSparkles,
   X,
 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import Badge from '../../components/common/Badge.jsx';
 import Button from '../../components/common/Button.jsx';
@@ -38,7 +38,6 @@ import {
 import { parseInvoiceWithAi } from '../../services/aiInvoiceService.js';
 import { extractTextFromImage, isOcrSupportedFile } from '../../services/ocrService.js';
 import {
-  approvePurchaseInvoice,
   createInvoiceItem,
   createPurchaseInvoice,
   deletePurchaseInvoice,
@@ -501,7 +500,7 @@ function AiExtractionPanel({ invoice }) {
   if (!invoice) {
     return null;
   }
-  const isAiParsed = ['openai_appwrite_function', 'openrouter_appwrite_function'].includes(invoice.ocrSource);
+  const isAiParsed = String(invoice.ocrSource || '').includes('appwrite_function');
 
   return (
     <Card>
@@ -716,7 +715,7 @@ function ReviewActions({
           rounded="2xl"
         >
           <PackageCheck className="h-4 w-4" />
-          Approve & Update Inventory
+          Review Inventory Update
         </Button>
         <Button className="w-full sm:w-auto" onClick={onEdit} rounded="2xl" variant="secondary">
           <Pencil className="h-4 w-4" />
@@ -1143,6 +1142,7 @@ function OcrTipsCard() {
 
 export default function InvoiceScannerPage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
   const [scanState, setScanState] = useState(initialScanState);
@@ -1506,26 +1506,11 @@ export default function InvoiceScannerPage() {
       return;
     }
 
-    setActionLoading('approve');
-    try {
-      const approvedInvoice = await approvePurchaseInvoice(user.$id, savedInvoice.id);
-      setSavedInvoice(approvedInvoice);
-      setExtractedInvoice(toScannerInvoice(approvedInvoice));
-      setScanState((current) => ({
-        ...current,
-        status: 'approved',
-        successMessage:
-          'Invoice approved. Inventory stock and supplier purchase data were updated.',
-      }));
-      await loadRecentScans();
-    } catch (error) {
-      setScanState((current) => ({
-        ...current,
-        error: error.message || 'Could not approve invoice.',
-      }));
-    } finally {
-      setActionLoading('');
-    }
+    navigate('/invoices', {
+      state: {
+        approveInvoiceId: savedInvoice.id,
+      },
+    });
   }
 
   async function runAiParseForInvoice(invoiceId, options = {}) {
@@ -1673,7 +1658,7 @@ export default function InvoiceScannerPage() {
         </div>
       </Card>
 
-      <section className="relative z-0 grid min-w-0 gap-6">
+      <section className="relative z-0 isolate grid min-w-0 gap-8">
         <div className="min-w-0 space-y-6">
           <InvoiceUploadCard
             file={selectedFile}
@@ -1724,7 +1709,7 @@ export default function InvoiceScannerPage() {
         </div>
       </section>
 
-      <section className="relative z-0 mt-10 clear-both space-y-4 border-t border-slate-100 pt-8">
+      <section className="relative z-0 isolate mt-16 clear-both space-y-5 border-t border-slate-100 pt-10">
         <SectionHeader
           subtitle="Recent scanned invoices saved in Appwrite for review workflows."
           title="Recent Scanned Invoices"

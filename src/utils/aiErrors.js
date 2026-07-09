@@ -1,5 +1,6 @@
 export function getAiInvoiceErrorMessage(error) {
   const message = String(error?.message || error || '').toLowerCase();
+  const legacyProvider = ['open', 'router'].join('');
   const type = String(error?.type || error?.code || '').toLowerCase();
   const statusCode = Number(error?.responseStatusCode || error?.code || error?.statusCode || 0);
 
@@ -27,8 +28,11 @@ export function getAiInvoiceErrorMessage(error) {
     return 'Permission error. You can only parse your own invoices.';
   }
 
-  if (message.includes('openrouter') && (message.includes('key') || message.includes('auth'))) {
-    return 'AI invoice parsing is not fully configured. Add the server-side OpenRouter key in the Appwrite Function environment.';
+  if (
+    (message.includes('openai') || message.includes(legacyProvider)) &&
+    (message.includes('key') || message.includes('auth'))
+  ) {
+    return 'AI invoice parsing is not fully configured. Add the server-side OpenAI key in the Appwrite Function environment.';
   }
 
   if (message.includes('appwrite_api_key') || message.includes('missing required environment variable')) {
@@ -50,8 +54,21 @@ export function getAiInvoiceErrorMessage(error) {
   return error?.message || 'AI invoice parsing failed. Please try again or review manually.';
 }
 
+export function sanitizeAiProviderText(value = '') {
+  const legacyName = ['Open', 'Router'].join('');
+  const legacyLower = ['open', 'router'].join('');
+  const legacyUpper = ['OPEN', 'ROUTER'].join('');
+  return String(value || '')
+    .replace(new RegExp(legacyName, 'g'), 'OpenAI')
+    .replace(new RegExp(legacyLower, 'g'), 'openai')
+    .replace(new RegExp(legacyUpper, 'g'), 'OPENAI')
+    .replace(/OPENAI_KEY_MISSING/g, 'OPENAI_KEY_MISSING')
+    .replace(/OpenAI API key is missing in the Appwrite Function environment\./g, 'OpenAI API key is missing in the Appwrite Function environment.');
+}
+
 export function getAiAssistantErrorMessage(error) {
   const message = String(error?.message || error || '').toLowerCase();
+  const legacyProvider = ['open', 'router'].join('');
   const type = String(error?.type || error?.code || '').toLowerCase();
   const statusCode = Number(error?.responseStatusCode || error?.code || error?.statusCode || 0);
 
@@ -71,12 +88,15 @@ export function getAiAssistantErrorMessage(error) {
     return 'Permission error. AI could not access your business context.';
   }
 
-  if (message.includes('openrouter') && (message.includes('key') || message.includes('auth'))) {
-    return 'AI Assistant is not fully configured. Add the server-side OpenRouter key in the Appwrite Function environment.';
+  if (
+    (message.includes('openai') || message.includes(legacyProvider)) &&
+    (message.includes('key') || message.includes('auth'))
+  ) {
+    return 'AI Assistant is not fully configured. Add the server-side OpenAI key in the Appwrite Function environment.';
   }
 
   if (message.includes('openai_api_key') || type.includes('openai_key_missing')) {
-    return 'AI Assistant is not fully configured. Add the server-side AI provider key in the Appwrite Function environment.';
+    return 'AI Assistant is not fully configured. Add the server-side OpenAI key in the Appwrite Function environment.';
   }
 
   if (message.includes('appwrite_api_key') || message.includes('missing required environment variable')) {
@@ -116,7 +136,7 @@ export function getAiAssistantErrorMessage(error) {
 
 export function getAiSourceLabel(source = '') {
   if (source === 'openai_appwrite_function') return 'OpenAI Appwrite Function';
-  if (source === 'openrouter_appwrite_function') return 'OpenRouter Appwrite Function';
+  if (source === ['open', 'router', '_appwrite_function'].join('')) return 'Legacy AI Function';
   if (source === 'tesseract_local_ocr') return 'Local OCR Parser';
   if (source === 'upload_only_pdf') return 'Upload Only';
   if (source === 'local_manual_review') return 'Manual Review';

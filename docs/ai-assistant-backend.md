@@ -1,6 +1,6 @@
 # AI Assistant Backend
 
-This document describes the secure AI Assistant backend using Appwrite Functions and OpenRouter.
+This document describes the secure AI Assistant backend using Appwrite Functions and OpenAI.
 
 ## Architecture
 
@@ -8,16 +8,16 @@ This document describes the secure AI Assistant backend using Appwrite Functions
 React AI Assistant
   -> Appwrite Function ai_business_assistant
   -> Appwrite Database summaries for current user
-  -> OpenRouter Chat Completions API
+  -> OpenAI Chat Completions API
   -> ai_history
   -> React chat response
 ```
 
-The browser never calls OpenRouter directly.
+The browser never calls OpenAI directly.
 
 ## Why Keys Are Server-Side
 
-`OPENROUTER_API_KEY` and `APPWRITE_API_KEY` must only exist in the Appwrite Function environment. They must never be prefixed with `VITE_` and must never be imported into React code.
+`OPENAI_API_KEY` and `APPWRITE_API_KEY` must only exist in the Appwrite Function environment. They must never be prefixed with `VITE_` and must never be imported into React code.
 
 Frontend uses only:
 
@@ -28,19 +28,16 @@ VITE_APPWRITE_AI_ASSISTANT_FUNCTION_ID=ai_business_assistant
 ## Function Environment Variables
 
 ```bash
-OPENROUTER_API_KEY=
-OPENROUTER_MODEL=tencent/hy3:free
-OPENROUTER_FALLBACK_MODELS=poolside/laguna-xs-2.1:free,cohere/north-mini-code:free
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_SITE_URL=http://localhost
-OPENROUTER_APP_NAME=MSME Pilot
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-5.4-mini-2026-03-17
+OPENAI_FALLBACK_MODELS=
 APPWRITE_ENDPOINT=https://sgp.cloud.appwrite.io/v1
 APPWRITE_PROJECT_ID=6a4b9c4c001d2015e28a
 APPWRITE_API_KEY=
 APPWRITE_DATABASE_ID=msme_pilot
 ```
 
-`OPENROUTER_MODEL` is configurable so the deployer can change the model without code changes. If the configured model is unavailable, the function tries `OPENROUTER_FALLBACK_MODELS` and bundled free-model fallbacks.
+`OpenAI_MODEL` is configurable so the deployer can change the model without code changes. If the configured model is unavailable, the function tries `OpenAI_FALLBACK_MODELS` and bundled free-model fallbacks.
 
 ## Auth Verification
 
@@ -74,7 +71,7 @@ It summarizes:
 - Generated reports
 - Recent AI conversation history
 
-Large raw collections, file URLs, secrets, passwords, and unnecessary OCR text are not sent to OpenRouter.
+Large raw collections, file URLs, secrets, passwords, and unnecessary OCR text are not sent to OpenAI.
 
 ## Prompt Strategy
 
@@ -151,9 +148,9 @@ Function not deployed:
 
 - Deploy `functions/ai-business-assistant` in Appwrite Console or CLI.
 
-OpenRouter key missing:
+OpenAI key missing:
 
-- Add `OPENROUTER_API_KEY` to function environment variables only.
+- Add `OPENAI_API_KEY` to function environment variables only.
 
 Appwrite API key missing:
 
@@ -161,7 +158,7 @@ Appwrite API key missing:
 
 Model unavailable:
 
-- Change `OPENROUTER_MODEL` to an enabled OpenRouter model for your account.
+- Change `OpenAI_MODEL` to an enabled OpenAI model for your account.
 
 Permission denied:
 

@@ -14,9 +14,9 @@ This document records the frontend and Appwrite security posture for MSME Pilot 
 ## Secret Rules
 
 - `APPWRITE_API_KEY` is server/setup/function only.
-- `OPENROUTER_API_KEY` is Appwrite Function only.
+- `OPENAI_API_KEY` is Appwrite Function only.
 - Never create `VITE_APPWRITE_API_KEY`.
-- Never create `VITE_OPENROUTER_API_KEY` or `VITE_OPENAI_API_KEY`.
+- Never create `VITE_OPENAI_API_KEY`.
 - Real `.env` and `.env.local` files must not be committed.
 - `.env.example` may contain only placeholders and frontend-safe IDs.
 

@@ -43,7 +43,7 @@ Run this checklist after deploying the frontend to Hostinger KVM and before shar
 - [ ] User A cannot see User B invoices.
 - [ ] User A cannot see User B AI history.
 - [ ] No `APPWRITE_API_KEY` appears in browser source.
-- [ ] No `OPENROUTER_API_KEY` or `OPENAI_API_KEY` appears in browser source.
+- [ ] No `OPENAI_API_KEY` or `OPENAI_API_KEY` appears in browser source.
 - [ ] No secret appears in browser network responses.
 - [ ] Storage files are private.
 - [ ] Appwrite Functions require authenticated execution.

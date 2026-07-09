@@ -15,12 +15,12 @@ import {
   validateRequestBody,
 } from './validateRequest.js';
 
-const OPENROUTER_TIMEOUT_MS = Math.min(
-  Math.max(Number(process.env.OPENROUTER_TIMEOUT_MS || 6000), 1000),
-  10000,
+const OPENAI_TIMEOUT_MS = Math.min(
+  Math.max(Number(process.env.OPENAI_TIMEOUT_MS || 10000), 1000),
+  12000,
 );
-const OPENROUTER_MAX_MODELS = Math.min(
-  Math.max(Number(process.env.OPENROUTER_MAX_MODELS || 1), 1),
+const OPENAI_MAX_MODELS = Math.min(
+  Math.max(Number(process.env.OPENAI_MAX_MODELS || 1), 1),
   3,
 );
 
@@ -44,81 +44,69 @@ function safeErrorResponse(res, error) {
   }, status);
 }
 
-function requireOpenRouterKey() {
-  const apiKey = process.env.OPENROUTER_API_KEY;
+function requireOpenAIKey() {
+  const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    throw Object.assign(new Error('OpenRouter API key is missing in the Appwrite Function environment.'), {
+    throw Object.assign(new Error('OpenAI API key is missing in the Appwrite Function environment.'), {
       statusCode: 500,
-      code: 'OPENROUTER_KEY_MISSING',
+      code: 'OPENAI_KEY_MISSING',
     });
   }
 
   return apiKey;
 }
 
-function createOpenRouterClient() {
+function createOpenAIClient() {
   return new OpenAI({
-    apiKey: requireOpenRouterKey(),
-    baseURL: process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1',
-    timeout: OPENROUTER_TIMEOUT_MS,
+    apiKey: requireOpenAIKey(),
+    timeout: OPENAI_TIMEOUT_MS,
     maxRetries: 0,
-    defaultHeaders: {
-      'HTTP-Referer': process.env.OPENROUTER_SITE_URL || 'http://localhost',
-      'X-OpenRouter-Title': process.env.OPENROUTER_APP_NAME || 'MSME Pilot',
-    },
   });
 }
 
-async function createAiResponse(openrouter, input, model) {
+async function createAiResponse(openai, input, model) {
   const request = {
     model,
-    messages: input.map((message, index) =>
-      index === 0
-        ? {
-            ...message,
-            content: [
-              message.content,
-              'Return only JSON. No markdown, no explanation, no code fences.',
-              `Required JSON schema: ${JSON.stringify(assistantResponseJsonSchema)}`,
-            ].join('\n'),
-          }
-        : message,
-    ),
+    messages: input,
     temperature: 0.2,
-    max_tokens: 700,
+    max_tokens: 900,
+    response_format: {
+      type: 'json_schema',
+      json_schema: {
+        name: 'msme_pilot_assistant_response',
+        strict: true,
+        schema: assistantResponseJsonSchema,
+      },
+    },
   };
 
-  if (process.env.OPENROUTER_USE_RESPONSE_FORMAT === 'true') {
-    request.response_format = { type: 'json_object' };
-  }
-
-  return openrouter.chat.completions.create(request);
+  return openai.chat.completions.create(request);
 }
 
 function getCompletionText(response) {
   return response?.choices?.[0]?.message?.content || '';
 }
 
-async function askOpenRouter(message, context) {
-  const openrouter = createOpenRouterClient();
+async function askOpenAI(message, context) {
+  const openai = createOpenAIClient();
   const input = buildAssistantInput({ message, context });
-  const modelCandidates = getOpenRouterModelCandidates();
+  const modelCandidates = getOpenAIModelCandidates();
   let lastError = null;
 
   for (const model of modelCandidates) {
     try {
-      const response = await createAiResponse(openrouter, input, model);
+      const response = await createAiResponse(openai, input, model);
       const text = getCompletionText(response) || getResponseText(response);
       if (!String(text || '').trim()) {
-        throw Object.assign(new Error('OpenRouter returned token usage but no assistant content.'), {
-          code: 'OPENROUTER_EMPTY_RESPONSE',
+        throw Object.assign(new Error('OpenAI returned token usage but no assistant content.'), {
+          code: 'OPENAI_EMPTY_RESPONSE',
           statusCode: 502,
         });
       }
       const payload = validateAssistantResponse(text);
       if (!String(payload.answer || '').trim() || payload.answer === 'AI assistant returned an empty response.') {
-        throw Object.assign(new Error('OpenRouter returned an empty answer.'), {
-          code: 'OPENROUTER_EMPTY_ANSWER',
+        throw Object.assign(new Error('OpenAI returned an empty answer.'), {
+          code: 'OPENAI_EMPTY_ANSWER',
           statusCode: 502,
         });
       }
@@ -128,13 +116,13 @@ async function askOpenRouter(message, context) {
       };
     } catch (error) {
       lastError = error;
-      if (!isRetryableOpenRouterError(error)) {
+      if (!isRetryableOpenAIError(error)) {
         break;
       }
     }
   }
 
-  throw mapOpenRouterError(lastError);
+  throw mapOpenAIError(lastError);
 }
 
 function formatCurrency(value) {
@@ -206,7 +194,7 @@ function buildFallbackAssistantPayload(message, context, reason = '') {
   }
 
   let answer = [
-    `I could not get a live OpenRouter response within the function time limit, so I used your Appwrite business data instead.`,
+    `I could not get a live OpenAI response within the function time limit, so I used your Appwrite business data instead.`,
     `${businessName} currently has ${inventory.lowStockProducts || 0} low-stock item(s), ${formatCurrency(customers.pendingCustomerDues || 0)} customer dues, ${formatCurrency(suppliers.supplierDues || 0)} supplier dues, and ${formatCurrency(sales.monthlyRevenue || 0)} monthly revenue.`,
   ].join(' ');
 
@@ -235,35 +223,31 @@ function buildFallbackAssistantPayload(message, context, reason = '') {
 
   return {
     answer,
-    summary: 'Generated from Appwrite business records because OpenRouter did not return fast enough.',
+    summary: 'Generated from Appwrite business records because OpenAI did not return fast enough.',
     suggestedActions: suggestedActions.slice(0, 5),
     relatedMetrics,
     warnings: [
-      'OpenRouter response was not used for this answer.',
+      'OpenAI response was not used for this answer.',
       reason ? `Fallback reason: ${String(reason).slice(0, 160)}` : 'Fallback reason: request timeout or provider unavailable.',
     ],
   };
 }
 
-function getOpenRouterModelCandidates() {
-  const configured = String(process.env.OPENROUTER_MODEL || '').trim();
-  const fallbackModels = String(process.env.OPENROUTER_FALLBACK_MODELS || '')
+function getOpenAIModelCandidates() {
+  const configured = String(process.env.OPENAI_MODEL || '').trim();
+  const fallbackModels = String(process.env.OPENAI_FALLBACK_MODELS || '')
     .split(',')
     .map((model) => model.trim())
     .filter(Boolean);
-  const currentFreeDefaults = [
-    'tencent/hy3:free',
-    'poolside/laguna-xs-2.1:free',
-    'cohere/north-mini-code:free',
-  ];
+  const defaults = ['gpt-5.4-mini-2026-03-17'];
 
-  return [...new Set([configured, ...fallbackModels, ...currentFreeDefaults].filter(Boolean))]
-    .slice(0, OPENROUTER_MAX_MODELS);
+  return [...new Set([configured, ...fallbackModels, ...defaults].filter(Boolean))]
+    .slice(0, OPENAI_MAX_MODELS);
 }
 
-function isRetryableOpenRouterError(error) {
+function isRetryableOpenAIError(error) {
   const message = String(error?.message || '').toLowerCase();
-  const retryableStatuses = new Set([400, 402, 408, 409, 429, 500, 502, 503, 504, 524, 529]);
+  const retryableStatuses = new Set([408, 409, 429, 500, 502, 503, 504, 529]);
 
   return (
     retryableStatuses.has(error?.status) ||
@@ -271,39 +255,38 @@ function isRetryableOpenRouterError(error) {
     message.includes('not found') ||
     message.includes('does not exist') ||
     message.includes('unavailable') ||
-    message.includes('provider') ||
     message.includes('rate limit') ||
     message.includes('json')
   );
 }
 
-function mapOpenRouterError(error) {
+function mapOpenAIError(error) {
   const message = String(error?.message || '').toLowerCase();
 
   if (error?.status === 401 || message.includes('api key')) {
     return Object.assign(
-      new Error('OpenRouter authentication failed. Check the function API key.'),
-      { statusCode: 502, code: 'OPENROUTER_AUTH_FAILED' },
+      new Error('OpenAI authentication failed. Check the function API key.'),
+      { statusCode: 502, code: 'OPENAI_AUTH_FAILED' },
     );
   }
 
   if (error?.status === 429 || message.includes('rate limit')) {
     return Object.assign(
-      new Error('OpenRouter free model rate limit reached. Try again later.'),
-      { statusCode: 429, code: 'OPENROUTER_RATE_LIMITED' },
+      new Error('OpenAI rate limit reached. Try again later.'),
+      { statusCode: 429, code: 'OPENAI_RATE_LIMITED' },
     );
   }
 
   if (message.includes('model') || message.includes('not found') || message.includes('does not exist')) {
     return Object.assign(
-      new Error('No configured OpenRouter model is currently available. Set OPENROUTER_MODEL to an enabled model.'),
-      { statusCode: 502, code: 'OPENROUTER_MODEL_UNAVAILABLE' },
+      new Error('No configured OpenAI model is currently available. Set OPENAI_MODEL to an enabled model.'),
+      { statusCode: 502, code: 'OPENAI_MODEL_UNAVAILABLE' },
     );
   }
 
   return Object.assign(
     new Error('AI assistant is temporarily unavailable. Please try again.'),
-    { statusCode: 502, code: 'OPENROUTER_ASSISTANT_UNAVAILABLE' },
+    { statusCode: 502, code: 'OPENAI_ASSISTANT_UNAVAILABLE' },
   );
 }
 
@@ -329,17 +312,17 @@ export default async ({ req, res, log, error }) => {
     let usedLocalFallback = false;
 
     try {
-      ({ payload, model } = await askOpenRouter(body.message, context));
+      ({ payload, model } = await askOpenAI(body.message, context));
     } catch (aiError) {
       usedLocalFallback = true;
       model = 'local_appwrite_context_fallback';
       payload = buildFallbackAssistantPayload(body.message, context, aiError?.message || aiError?.code || '');
-      error?.(`OpenRouter unavailable, local fallback used code=${aiError?.code || 'UNKNOWN'} status=${aiError?.statusCode || aiError?.status || 'UNKNOWN'}`);
+      error?.(`OpenAI unavailable, local fallback used code=${aiError?.code || 'UNKNOWN'} status=${aiError?.statusCode || aiError?.status || 'UNKNOWN'}`);
     }
 
     const warnings = [...(payload.warnings || []), ...(context.warnings || [])];
     if (usedLocalFallback) {
-      warnings.unshift('AI answered from Appwrite data because OpenRouter was slow or unavailable.');
+      warnings.unshift('AI answered from Appwrite data because OpenAI was slow or unavailable.');
     }
     let savedHistory = false;
     let history = {};

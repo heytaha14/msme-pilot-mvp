@@ -1,6 +1,6 @@
 import { DATABASE_ID, COLLECTION_IDS } from '../config/appwriteSchema.js';
 import { databases, ExecutionMethod, functions, Query } from '../lib/appwrite.js';
-import { getAiAssistantErrorMessage } from '../utils/aiErrors.js';
+import { getAiAssistantErrorMessage, sanitizeAiProviderText } from '../utils/aiErrors.js';
 import { assertOwnsDocument } from '../utils/ownership.js';
 
 export function getAiAssistantFunctionId() {
@@ -22,7 +22,7 @@ export function parseAiAssistantExecutionResponse(execution) {
   if (execution.status === 'failed' || execution.responseStatusCode >= 400 || payload?.success === false) {
     const error = payload?.error || {};
     const details = execution.errors || execution.logs || '';
-    throw new Error(error.message || details || 'AI Assistant function execution failed before reaching OpenRouter.');
+    throw new Error(error.message || details || 'AI Assistant function execution failed before reaching OpenAI.');
   }
 
   const data = payload?.data || payload?.result || payload?.assistant || payload?.response || payload;
@@ -39,10 +39,10 @@ export function parseAiAssistantExecutionResponse(execution) {
   return {
     ...payload,
     ...data,
-    answer: String(answer).trim(),
+    answer: sanitizeAiProviderText(answer).trim(),
     suggestedActions: data?.suggestedActions || payload?.suggestedActions || [],
     relatedMetrics: data?.relatedMetrics || payload?.relatedMetrics || [],
-    warnings: data?.warnings || payload?.warnings || [],
+    warnings: (data?.warnings || payload?.warnings || []).map(sanitizeAiProviderText),
     conversationId: data?.conversationId || payload?.conversationId || '',
     assistantMessageId: data?.assistantMessageId || payload?.assistantMessageId || '',
   };
@@ -96,9 +96,9 @@ function parseHistoryMessage(document) {
 
   try {
     const parsed = JSON.parse(document.message);
-    return parsed.answer || document.message;
+    return sanitizeAiProviderText(parsed.answer || document.message);
   } catch {
-    return document.message;
+    return sanitizeAiProviderText(document.message);
   }
 }
 

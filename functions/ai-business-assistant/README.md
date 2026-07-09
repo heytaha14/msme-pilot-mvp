@@ -2,26 +2,23 @@
 
 Function ID: `ai_business_assistant`
 
-This Appwrite Function powers the MSME Pilot AI Assistant. It verifies the authenticated Appwrite user, loads only that user's business context, calls OpenRouter server-side, returns a business-focused response, and stores conversation history in `ai_history`.
+This Appwrite Function powers the MSME Pilot AI Assistant. It verifies the authenticated Appwrite user, loads only that user's business context, calls OpenAI server-side, returns a business-focused response, and stores conversation history in `ai_history`.
 
 ## Required Environment Variables
 
 Function-only variables:
 
 ```bash
-OPENROUTER_API_KEY=
-OPENROUTER_MODEL=tencent/hy3:free
-OPENROUTER_FALLBACK_MODELS=poolside/laguna-xs-2.1:free,cohere/north-mini-code:free
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-OPENROUTER_SITE_URL=http://localhost
-OPENROUTER_APP_NAME=MSME Pilot
+OPENAI_API_KEY=
+OPENAI_MODEL=gpt-5.4-mini-2026-03-17
+OPENAI_FALLBACK_MODELS=
 APPWRITE_ENDPOINT=https://sgp.cloud.appwrite.io/v1
 APPWRITE_PROJECT_ID=6a4b9c4c001d2015e28a
 APPWRITE_API_KEY=
 APPWRITE_DATABASE_ID=msme_pilot
 ```
 
-Never expose `OPENROUTER_API_KEY`, `OPENAI_API_KEY`, or `APPWRITE_API_KEY` in frontend Vite variables.
+Never expose `OPENAI_API_KEY`, `OPENAI_API_KEY`, or `APPWRITE_API_KEY` in frontend Vite variables.
 
 ## Input JSON
 
@@ -79,9 +76,9 @@ All collection queries include `Query.equal("userId", userId)`.
 - Conversation history is saved with per-user read, update, and delete permissions.
 - The function never logs API keys, full business context, OCR text, passwords, or secrets.
 
-## OpenRouter Usage
+## OpenAI Usage
 
-OpenRouter is called only server-side. The function uses the OpenAI-compatible Chat Completions API through the OpenAI Node SDK and requests a compact JSON response with:
+OpenAI is called only server-side. The function uses the OpenAI-compatible Chat Completions API through the OpenAI Node SDK and requests a compact JSON response with:
 
 - `answer`
 - `summary`
@@ -119,9 +116,9 @@ Function ID missing:
 
 - Add `VITE_APPWRITE_AI_ASSISTANT_FUNCTION_ID=ai_business_assistant` to frontend env.
 
-OpenRouter key missing:
+OpenAI key missing:
 
-- Add `OPENROUTER_API_KEY` to function environment variables only.
+- Add `OPENAI_API_KEY` to function environment variables only.
 
 Appwrite API key missing:
 
@@ -129,7 +126,7 @@ Appwrite API key missing:
 
 Model unavailable:
 
-- Change `OPENROUTER_MODEL` to an enabled OpenRouter model in the function environment.
+- Change `OpenAI_MODEL` to an enabled OpenAI model in the function environment.
 
 History not saving:
 

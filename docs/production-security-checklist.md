@@ -6,9 +6,9 @@ Use this checklist before deploying MSME Pilot publicly.
 
 - [ ] Revoke any API key that was ever pasted outside Appwrite Console or local secure env.
 - [ ] Store `APPWRITE_API_KEY` only in local backend setup env or Appwrite Function env.
-- [ ] Store `OPENROUTER_API_KEY` only in Appwrite Function env.
+- [ ] Store `OPENAI_API_KEY` only in Appwrite Function env.
 - [ ] Confirm no `VITE_APPWRITE_API_KEY` exists.
-- [ ] Confirm no `VITE_OPENROUTER_API_KEY` or `VITE_OPENAI_API_KEY` exists.
+- [ ] Confirm no `VITE_OPENAI_API_KEY` exists.
 - [ ] Confirm `.env`, `.env.local`, and `.env.*` are ignored by git.
 
 ## Appwrite Auth
@@ -42,8 +42,8 @@ Use this checklist before deploying MSME Pilot publicly.
 - [ ] Deploy `ai-business-assistant` with server-side env only.
 - [ ] Confirm functions require authenticated execution.
 - [ ] Confirm functions verify Appwrite JWT.
-- [ ] Confirm function logs never print full API keys, JWTs, or OpenRouter keys.
-- [ ] Confirm OpenRouter requests run server-side only.
+- [ ] Confirm function logs never print full API keys, JWTs, or OpenAI keys.
+- [ ] Confirm OpenAI requests run server-side only.
 
 ## Frontend
 
